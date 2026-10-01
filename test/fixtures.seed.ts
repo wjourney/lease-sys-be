@@ -8,8 +8,11 @@ import { RentBillingService } from "../src/modules/incomes/rent-billing.service"
 const db = new Db();
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl || new URL(databaseUrl).pathname !== "/lease_test")
-    throw new Error("Test fixtures can only be loaded into lease_test");
+  if (
+    !databaseUrl ||
+    !["/lease_test", "/lease_sys_test"].includes(new URL(databaseUrl).pathname)
+  )
+    throw new Error("Test fixtures can only be loaded into a test database");
   if (await db.user.count()) {
     console.log("Seed skipped: database already contains users");
     return;

@@ -63,7 +63,11 @@ export class TasksService implements OnApplicationBootstrap, OnModuleDestroy {
         try {
           await this.renderer.render(system, inv.id);
         } catch (e) {
-          console.error("PDF task failed", inv.id);
+          console.error(
+            "PDF task failed",
+            inv.id,
+            e instanceof Error ? e.message : String(e),
+          );
         }
       const emails = await db.invoice.findMany({
         where: {

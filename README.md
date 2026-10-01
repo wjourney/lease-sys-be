@@ -1,6 +1,6 @@
 # SUPREME BAY 租赁管理系统 · 后端
 
-本地 NestJS + TypeScript + Prisma + PostgreSQL 应用，代码直接位于 `/Users/wenwen/www/learn/lease-sys-be`。提供真实认证、权限、持久化、资金流程、私有资料和 PDF 接口。
+NestJS + TypeScript + Prisma + MySQL 应用。提供真实认证、权限、持久化、资金流程、私有资料和 PDF 接口。
 
 ## 启动
 
@@ -19,7 +19,7 @@ pnpm dev
 
 API：http://127.0.0.1:3001/api/v1 。Swagger：http://127.0.0.1:3001/api/docs 。健康检查：`GET /api/v1/health`。
 
-Compose 使用 PostgreSQL 16，端口 `55432`，数据库 `lease`，容器 `lease-sys-postgres-1`，数据保存在 Docker volume。迁移只有 12 张业务表，另有 Prisma 自身的迁移记录。不要用 `migrate reset` 处理有业务数据的数据库。
+本地 Compose 使用 MySQL 5.7，端口 `53306`，测试库 `lease_test`。生产环境连接服务器已有的 MySQL，使用独立的 `lease_sys` 数据库和账号。迁移有 12 张业务表，另有 Prisma 自身的迁移记录。不要对有业务数据的数据库执行 `migrate reset`。
 
 开发种子只在空库创建一个 `admin` 超级管理员账号，不创建项目、订单或其他演示数据。密码由 `SEED_PASSWORD` 配置（示例环境为 `ChangeMe123!`），生产环境禁止运行该种子。集成测试的样例数据只在独立的 `lease_test` 库临时创建，测试结束后清除。
 
@@ -40,9 +40,9 @@ Compose 使用 PostgreSQL 16，端口 `55432`，数据库 `lease`，容器 `leas
 | fund_accounts   | 收付款账户                                                |
 | system_settings | 单位类型和公共配置                                        |
 
-准确字段见 `prisma/schema.prisma`；外键、CHECK、唯一索引和租期排斥约束见 `prisma/migrations/202609290001_initial/migration.sql`。为精简 Prisma 定义，关系以标量 ID 表达，数据库外键由迁移 SQL 明确创建。
+准确字段见 `prisma/schema.prisma`；外键和唯一索引见 `prisma/migrations/202610010001_mysql_initial/migration.sql`。为精简 Prisma 定义，关系以标量 ID 表达，数据库外键由迁移 SQL 明确创建。MySQL 5.7 不执行 CHECK 约束，租期重叠由 API 内的单位行锁和校验防止，因此不要直接写入业务表。
 
-所有业务记录自带 operation_logs JSONB，只记录 CREATE/UPDATE/DELETE，保留操作人、时间、变更前后值、原因。修改使用事务锁和 revision，删除为软删除。没有独立账单、收款、附件、订单变更或操作日志表。
+所有业务记录自带 operationLogs JSON，只记录 CREATE/UPDATE/DELETE，保留操作人、时间、变更前后值、原因。修改使用事务锁和 revision，删除为软删除。没有独立账单、收款、附件、订单变更或操作日志表。
 
 ## 代码组织
 

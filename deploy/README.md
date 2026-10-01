@@ -1,34 +1,35 @@
 # Production deployment
 
 The two source repositories are cloned at `/srv/lease-sys/lease-sys-be` and
-`/srv/lease-sys/lease-sys-fe`. Compose runs three containers: `db`, `api`, and
-`web`. Only `web` publishes a port, bound to `127.0.0.1:18080` for the existing
+`/srv/lease-sys/lease-sys-fe`. Compose runs `api` and `web`; the API connects to
+the host's existing MySQL 5.7 service through `host.docker.internal`. Only `web`
+publishes a port, bound to `127.0.0.1:18080` for the existing
 host Nginx installation to proxy a dedicated HTTPS hostname to it. The web
 container uses Caddy for static assets and `/api/` routing within Compose.
 
 Runtime configuration stays outside Git:
 
-- `/srv/lease-sys/config/stack.env`: `POSTGRES_PASSWORD`
 - `/srv/lease-sys/config/api.env`: `DATABASE_URL`, `JWT_SECRET`, `APP_ORIGIN`,
   `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3001`, and
   `UPLOAD_DIR=/data/uploads`; SMTP settings are optional
+- `/srv/lease-sys/config/mysql-backup.cnf`: restricted credentials for the
+  dedicated `lease_backup` MySQL user
 - `/srv/lease-sys/config/versions.env`: deployed `API_IMAGE` and `WEB_IMAGE`
 - `/srv/lease-sys/config/bootstrap.secret`: optional one-time initial admin
   password (12+ characters); removed after the first successful initialization
 
-`data/postgres` and `data/uploads` must persist across container recreations.
-Back up both, and keep a copy off the host. The API image includes the Prisma
-CLI and Chromium. `deploy.sh` applies `prisma migrate deploy` before replacing
-the API container. It intentionally never runs the development seed in
-production.
+The `lease_sys` MySQL database and `data/uploads` must persist. Back up both,
+and keep a copy off the host. The API image includes the Prisma CLI and
+Chromium. `deploy.sh` backs up the database and uploads, then applies
+`prisma migrate deploy` before replacing the API container. It intentionally
+never runs the development seed in production. The database uses a dedicated
+`lease_app` account, scoped to `lease_sys` and Docker bridge clients.
 
-The CentOS 7 host's Docker seccomp filter returns `EPERM` for PostgreSQL's
-`pwritev2` call; `strace` confirmed this on the 3.10 kernel. The database uses
-`seccomp-postgres.json`, derived from the [Moby 25.0.4 default profile](https://github.com/moby/moby/blob/v25.0.4/profiles/seccomp/default.json)
-(Apache-2.0). Its syscall allowlist is unchanged; only the default rejection
-errno is `ENOSYS` instead of `EPERM`, so libc can fall back for unavailable
-syscalls. This profile applies only to `db`. Re-test the stock profile after
-upgrading the host kernel.
+The MySQL 5.7 migration preserves foreign keys and uses generated columns to
+enforce one active invoice per receipt and one current material per group.
+MySQL 5.7 does not enforce `CHECK` constraints or support PostgreSQL exclusion
+constraints; validation and unit occupancy locking remain in the API. Avoid
+direct writes to the lease tables.
 
 GitHub Actions builds each image on pushes to `master`, stores it in GHCR under
 the commit SHA, and streams a compressed release archive containing a Git bundle

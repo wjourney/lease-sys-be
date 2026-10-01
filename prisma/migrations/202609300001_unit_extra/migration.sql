@@ -1,1 +1,0 @@
-ALTER TABLE "units" ADD COLUMN "extra" JSONB NOT NULL DEFAULT '{}';

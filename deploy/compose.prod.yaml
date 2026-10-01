@@ -1,23 +1,6 @@
 name: lease-sys
 
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    security_opt:
-      - seccomp=/srv/lease-sys/lease-sys-be/deploy/seccomp-postgres.json
-    environment:
-      POSTGRES_USER: lease
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in config/stack.env}
-      POSTGRES_DB: lease
-    volumes:
-      - /srv/lease-sys/data/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lease -d lease"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
   api:
     image: ${API_IMAGE:?Set API_IMAGE in config/versions.env}
     restart: unless-stopped
@@ -25,11 +8,10 @@ services:
     shm_size: 512m
     env_file:
       - /srv/lease-sys/config/api.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /srv/lease-sys/data/uploads:/data/uploads
-    depends_on:
-      db:
-        condition: service_healthy
     healthcheck:
       test:
         - CMD

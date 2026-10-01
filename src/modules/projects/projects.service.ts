@@ -38,7 +38,7 @@ export class ProjectsService extends ResourceService {
     const ids = z.array(z.string().uuid()).max(4).parse(body.ids);
     if (new Set(ids).size !== ids.length) fail("Logo 列表包含重复文件");
     return this.db.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${projectId}))`;
+      await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId} FOR UPDATE`;
       await this.access.get(a, "projects", projectId, tx);
       const logos = await tx.material.findMany({
         where: {

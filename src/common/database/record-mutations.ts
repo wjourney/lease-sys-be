@@ -79,7 +79,7 @@ export async function update(
 export async function lock(tx: any, resource: string, key: string) {
   if (!tables[resource]) fail("未知资源");
   await tx.$queryRawUnsafe(
-    `SELECT id FROM "${tables[resource]}" WHERE id=$1::uuid FOR UPDATE`,
+    `SELECT id FROM \`${tables[resource]}\` WHERE id = ? FOR UPDATE`,
     key,
   );
 }

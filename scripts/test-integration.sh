@@ -5,9 +5,12 @@ if curl -sf http://127.0.0.1:3002/api/v1/health >/dev/null; then
   echo 'Port 3002 is occupied. Stop the previous test server before running tests.' >&2
   exit 1
 fi
-# This command only resets the dedicated lease_test database, never lease.
-docker exec lease-sys-postgres-1 sh -c 'psql -U lease -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '\''lease_test'\''" | grep -q 1 || createdb -U lease lease_test'
-export DATABASE_URL='postgresql://lease:lease_local_only@127.0.0.1:55432/lease_test?schema=public'
+export DATABASE_URL="${DATABASE_URL:-mysql://root:lease_test_root_local_only@127.0.0.1:53306/lease_test}"
+# Tests reset their database. Refuse production hosts, ports and schema names.
+node -e 'const url = new URL(process.env.DATABASE_URL); if (url.protocol !== "mysql:" || !["127.0.0.1", "localhost"].includes(url.hostname) || !["13306", "53306"].includes(url.port) || !["lease_test", "lease_sys_test"].includes(url.pathname.slice(1))) process.exit(1)' || {
+  echo 'Refusing to reset a database outside the dedicated local test schema.' >&2
+  exit 1
+}
 export PORT=3002
 export APP_ORIGIN='http://127.0.0.1:5174,http://localhost:5174'
 export JWT_SECRET='lease-test-only-secret-never-use-in-production'

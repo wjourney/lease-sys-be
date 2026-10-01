@@ -58,7 +58,6 @@ fi
 compose() {
   docker compose \
     --project-directory "$root" \
-    --env-file "$root/config/stack.env" \
     --env-file "$versions" \
     -f "$root/lease-sys-be/deploy/compose.prod.yaml" "$@"
 }
@@ -81,8 +80,8 @@ rollback() {
 }
 trap rollback ERR
 
-compose up -d --wait db
 if [[ "$service" == api ]]; then
+  # The database is the host's existing MySQL service. Do not start or change it.
   bash "$root/lease-sys-be/deploy/backup.sh"
 fi
 

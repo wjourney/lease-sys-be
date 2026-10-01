@@ -115,7 +115,7 @@ export class MaterialFilesService {
         });
     try {
       return await this.db.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${old.materialGroupId}))`;
+        await tx.$queryRaw`SELECT id FROM materials WHERE materialGroupId = ${old.materialGroupId} ORDER BY id LIMIT 1 FOR UPDATE`;
         const current = await tx.material.findFirst({
           where: { materialGroupId: old.materialGroupId, isCurrent: true },
         });

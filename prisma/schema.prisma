@@ -3,20 +3,20 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id             String    @id @default(uuid()) @db.Uuid
+  id             String    @id @default(uuid()) @db.Char(36)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  createdBy      String?   @db.Uuid
-  updatedBy      String?   @db.Uuid
+  createdBy      String?   @db.Char(36)
+  updatedBy      String?   @db.Char(36)
   revision       Int       @default(1)
   operationLogs  Json      @default("[]")
   deletedAt      DateTime?
-  deletedBy      String?   @db.Uuid
+  deletedBy      String?   @db.Char(36)
   username       String    @unique
   passwordHash   String
   authVersion    Int       @default(1)
@@ -27,7 +27,7 @@ model User {
   avatarMimeType   String?
   phone          String?
   email          String?
-  salesCompanyId String?   @db.Uuid
+  salesCompanyId String?   @db.Char(36)
   branchCode     String?
   positionCode   String?
   status         String    @default("ACTIVE")
@@ -39,23 +39,23 @@ model User {
 }
 
 model SalesCompany {
-  id                    String    @id @default(uuid()) @db.Uuid
+  id                    String    @id @default(uuid()) @db.Char(36)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
-  createdBy             String?   @db.Uuid
-  updatedBy             String?   @db.Uuid
+  createdBy             String?   @db.Char(36)
+  updatedBy             String?   @db.Char(36)
   revision              Int       @default(1)
   operationLogs         Json      @default("[]")
   deletedAt             DateTime?
-  deletedBy             String?   @db.Uuid
+  deletedBy             String?   @db.Char(36)
   companyNo             String    @unique
   name                  String
   nameEn                String?
   contactName           String?
   phone                 String?
   email                 String?
-  address               String?
-  serviceArea           String?
+  address               String? @db.Text
+  serviceArea           String? @db.Text
   registrationNo        String?
   registrationExpiresOn DateTime? @db.Date
   serviceStartsOn       DateTime? @db.Date
@@ -68,15 +68,15 @@ model SalesCompany {
 }
 
 model Project {
-  id                    String    @id @default(uuid()) @db.Uuid
+  id                    String    @id @default(uuid()) @db.Char(36)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
-  createdBy             String?   @db.Uuid
-  updatedBy             String?   @db.Uuid
+  createdBy             String?   @db.Char(36)
+  updatedBy             String?   @db.Char(36)
   revision              Int       @default(1)
   operationLogs         Json      @default("[]")
   deletedAt             DateTime?
-  deletedBy             String?   @db.Uuid
+  deletedBy             String?   @db.Char(36)
   code                  String    @unique
   name                  String
   nameEn                String?
@@ -87,7 +87,7 @@ model Project {
   completionDate        DateTime? @db.Date
   longitude             Decimal?  @db.Decimal(12, 8)
   latitude              Decimal?  @db.Decimal(12, 8)
-  description           String?
+  description           String? @db.Text
   facilities            Json      @default("[]")
   extra                 Json      @default("{}")
   salesCanViewExactRent Boolean   @default(false)
@@ -99,16 +99,16 @@ model Project {
 }
 
 model Unit {
-  id             String    @id @default(uuid()) @db.Uuid
+  id             String    @id @default(uuid()) @db.Char(36)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  createdBy      String?   @db.Uuid
-  updatedBy      String?   @db.Uuid
+  createdBy      String?   @db.Char(36)
+  updatedBy      String?   @db.Char(36)
   revision       Int       @default(1)
   operationLogs  Json      @default("[]")
   deletedAt      DateTime?
-  deletedBy      String?   @db.Uuid
-  projectId      String    @db.Uuid
+  deletedBy      String?   @db.Char(36)
+  projectId      String    @db.Char(36)
   unitNo         String
   unitTypeCode   String
   building       String?
@@ -121,7 +121,7 @@ model Unit {
   minRent        Decimal   @db.Decimal(18, 2)
   maxRent        Decimal   @db.Decimal(18, 2)
   minLeaseMonths Int       @default(1)
-  commissionNote String?
+  commissionNote String? @db.Text
   extra          Json      @default("{}")
   enabled        Boolean   @default(true)
 
@@ -131,20 +131,20 @@ model Unit {
 }
 
 model Order {
-  id                        String    @id @default(uuid()) @db.Uuid
+  id                        String    @id @default(uuid()) @db.Char(36)
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
-  createdBy                 String?   @db.Uuid
-  updatedBy                 String?   @db.Uuid
+  createdBy                 String?   @db.Char(36)
+  updatedBy                 String?   @db.Char(36)
   revision                  Int       @default(1)
   operationLogs             Json      @default("[]")
   deletedAt                 DateTime?
-  deletedBy                 String?   @db.Uuid
+  deletedBy                 String?   @db.Char(36)
   orderNo                   String    @unique
-  projectId                 String    @db.Uuid
-  unitId                    String    @db.Uuid
-  salesCompanyId            String    @db.Uuid
-  salesUserId               String    @db.Uuid
+  projectId                 String    @db.Char(36)
+  unitId                    String    @db.Char(36)
+  salesCompanyId            String    @db.Char(36)
+  salesUserId               String    @db.Char(36)
   tenantType                String    @default("PERSON")
   tenantName                String
   tenantRegistrationNo      String?
@@ -168,15 +168,15 @@ model Order {
   actualTerminationOn       DateTime? @db.Date
   handoverStatus            String    @default("PENDING")
   handedOverAt              DateTime?
-  handoverNote              String?
+  handoverNote              String? @db.Text
   depositDeductionAmount    Decimal   @default(0) @db.Decimal(18, 2)
-  depositDeductionReason    String?
+  depositDeductionReason    String? @db.Text
   depositSettledAt          DateTime?
   tenantSnapshot            Json      @default("{}")
   unitSnapshot              Json      @default("{}")
   salesSnapshot             Json      @default("{}")
-  currentContractMaterialId String?   @db.Uuid
-  remark                    String?
+  currentContractMaterialId String?   @db.Char(36)
+  remark                    String? @db.Text
 
   @@index([salesCompanyId, salesUserId, status])
   @@index([unitId, startsOn, endsOn])
@@ -184,21 +184,21 @@ model Order {
 }
 
 model Income {
-  id               String    @id @default(uuid()) @db.Uuid
+  id               String    @id @default(uuid()) @db.Char(36)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
-  createdBy        String?   @db.Uuid
-  updatedBy        String?   @db.Uuid
+  createdBy        String?   @db.Char(36)
+  updatedBy        String?   @db.Char(36)
   revision         Int       @default(1)
   operationLogs    Json      @default("[]")
   deletedAt        DateTime?
-  deletedBy        String?   @db.Uuid
+  deletedBy        String?   @db.Char(36)
   recordNo         String    @unique
   recordType       String
-  parentId         String?   @db.Uuid
-  orderId          String?   @db.Uuid
-  projectId        String?   @db.Uuid
-  unitId           String?   @db.Uuid
+  parentId         String?   @db.Char(36)
+  orderId          String?   @db.Char(36)
+  projectId        String?   @db.Char(36)
+  unitId           String?   @db.Char(36)
   feeType          String
   amount           Decimal   @db.Decimal(18, 2)
   adjustmentAmount Decimal   @default(0) @db.Decimal(18, 2)
@@ -207,19 +207,19 @@ model Income {
   periodEnd        DateTime? @db.Date
   dueOn            DateTime? @db.Date
   receivedOn       DateTime? @db.Date
-  fundAccountId    String?   @db.Uuid
+  fundAccountId    String?   @db.Char(36)
   paymentMethod    String?
   bankReference    String?
   payerName        String?
   payerEmail       String?
   status           String    @default("OPEN")
-  confirmedBy      String?   @db.Uuid
+  confirmedBy      String?   @db.Char(36)
   confirmedAt      DateTime?
-  rejectionReason  String?
+  rejectionReason  String? @db.Text
   sourceKey        String?   @unique
   recurrenceRule   Json      @default("{}")
   nextGenerationOn DateTime? @db.Date
-  remark           String?
+  remark           String? @db.Text
 
   @@index([parentId, status])
   @@index([orderId, recordType])
@@ -228,34 +228,34 @@ model Income {
 }
 
 model Expense {
-  id               String    @id @default(uuid()) @db.Uuid
+  id               String    @id @default(uuid()) @db.Char(36)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
-  createdBy        String?   @db.Uuid
-  updatedBy        String?   @db.Uuid
+  createdBy        String?   @db.Char(36)
+  updatedBy        String?   @db.Char(36)
   revision         Int       @default(1)
   operationLogs    Json      @default("[]")
   deletedAt        DateTime?
-  deletedBy        String?   @db.Uuid
+  deletedBy        String?   @db.Char(36)
   expenseNo        String    @unique
-  orderId          String?   @db.Uuid
-  projectId        String?   @db.Uuid
-  unitId           String?   @db.Uuid
-  commissionId     String?   @db.Uuid
-  originalIncomeId String?   @db.Uuid
+  orderId          String?   @db.Char(36)
+  projectId        String?   @db.Char(36)
+  unitId           String?   @db.Char(36)
+  commissionId     String?   @db.Char(36)
+  originalIncomeId String?   @db.Char(36)
   feeType          String
   amount           Decimal   @db.Decimal(18, 2)
   paidAmount       Decimal   @default(0) @db.Decimal(18, 2)
   currency         String    @default("HKD")
   dueOn            DateTime? @db.Date
   paidOn           DateTime? @db.Date
-  fundAccountId    String?   @db.Uuid
+  fundAccountId    String?   @db.Char(36)
   paymentMethod    String?
   bankReference    String?
   payeeName        String
   status           String    @default("UNPAID")
   sourceKey        String?   @unique
-  remark           String?
+  remark           String? @db.Text
 
   @@index([commissionId, status])
   @@index([orderId, status])
@@ -263,19 +263,19 @@ model Expense {
 }
 
 model Commission {
-  id             String    @id @default(uuid()) @db.Uuid
+  id             String    @id @default(uuid()) @db.Char(36)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  createdBy      String?   @db.Uuid
-  updatedBy      String?   @db.Uuid
+  createdBy      String?   @db.Char(36)
+  updatedBy      String?   @db.Char(36)
   revision       Int       @default(1)
   operationLogs  Json      @default("[]")
   deletedAt      DateTime?
-  deletedBy      String?   @db.Uuid
+  deletedBy      String?   @db.Char(36)
   commissionNo   String    @unique
-  orderId        String    @db.Uuid
-  salesCompanyId String    @db.Uuid
-  salesUserId    String    @db.Uuid
+  orderId        String    @db.Char(36)
+  salesCompanyId String    @db.Char(36)
+  salesUserId    String    @db.Char(36)
   mode           String    @default("MONTHLY")
   periodStart    DateTime  @db.Date
   periodEnd      DateTime  @db.Date
@@ -283,7 +283,7 @@ model Commission {
   amount         Decimal?  @db.Decimal(18, 2)
   currency       String    @default("HKD")
   status         String    @default("OPEN")
-  remark         String?
+  remark         String? @db.Text
 
   @@unique([orderId, mode, periodStart])
   @@index([salesCompanyId, salesUserId])
@@ -291,27 +291,27 @@ model Commission {
 }
 
 model Invoice {
-  id                String    @id @default(uuid()) @db.Uuid
+  id                String    @id @default(uuid()) @db.Char(36)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
-  createdBy         String?   @db.Uuid
-  updatedBy         String?   @db.Uuid
+  createdBy         String?   @db.Char(36)
+  updatedBy         String?   @db.Char(36)
   revision          Int       @default(1)
   operationLogs     Json      @default("[]")
   deletedAt         DateTime?
-  deletedBy         String?   @db.Uuid
+  deletedBy         String?   @db.Char(36)
   invoiceNo         String    @unique
-  incomeId          String    @db.Uuid
+  incomeId          String    @db.Char(36)
   amount            Decimal   @db.Decimal(18, 2)
   currency          String    @default("HKD")
   issuedOn          DateTime  @db.Date
   snapshot          Json
   status            String    @default("ACTIVE")
-  replacesInvoiceId String?   @db.Uuid
-  voidReason        String?
+  replacesInvoiceId String?   @db.Char(36)
+  voidReason        String? @db.Text
   renderStatus      String    @default("PENDING")
   renderAttempts    Int       @default(0)
-  renderError       String?
+  renderError       String? @db.Text
   renderNextRetryAt DateTime?
   emailTo           String?
   emailSubject      String?
@@ -319,7 +319,7 @@ model Invoice {
   emailRequestId    String?
   emailAttempts     Int       @default(0)
   emailNextRetryAt  DateTime?
-  emailLastError    String?
+  emailLastError    String? @db.Text
   lastSentAt        DateTime?
 
   @@index([incomeId])
@@ -327,43 +327,43 @@ model Invoice {
 }
 
 model Material {
-  id                 String    @id @default(uuid()) @db.Uuid
+  id                 String    @id @default(uuid()) @db.Char(36)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
-  createdBy          String?   @db.Uuid
-  updatedBy          String?   @db.Uuid
+  createdBy          String?   @db.Char(36)
+  updatedBy          String?   @db.Char(36)
   revision           Int       @default(1)
   operationLogs      Json      @default("[]")
   deletedAt          DateTime?
-  deletedBy          String?   @db.Uuid
-  projectId          String?   @db.Uuid
-  unitId             String?   @db.Uuid
-  orderId            String?   @db.Uuid
-  incomeId           String?   @db.Uuid
-  expenseId          String?   @db.Uuid
-  invoiceId          String?   @db.Uuid
-  salesCompanyId     String?   @db.Uuid
-  userId             String?   @db.Uuid
+  deletedBy          String?   @db.Char(36)
+  projectId          String?   @db.Char(36)
+  unitId             String?   @db.Char(36)
+  orderId            String?   @db.Char(36)
+  incomeId           String?   @db.Char(36)
+  expenseId          String?   @db.Char(36)
+  invoiceId          String?   @db.Char(36)
+  salesCompanyId     String?   @db.Char(36)
+  userId             String?   @db.Char(36)
   category           String
   visibility         String    @default("SHARED")
   title              String
-  description        String?
-  body               String?
-  sourceUrl          String?
+  description        String? @db.Text
+  body               String? @db.Text
+  sourceUrl          String? @db.Text
   storageKey         String?
-  originalName       String?
+  originalName       String? @db.Text
   mimeType           String?
   sizeBytes          Int?
   checksum           String?
-  materialGroupId    String    @default(uuid()) @db.Uuid
+  materialGroupId    String    @default(uuid()) @db.Char(36)
   versionNo          Int       @default(1)
   isCurrent          Boolean   @default(true)
   status             String    @default("ACTIVE")
   sortOrder          Int       @default(0)
-  templateMaterialId String?   @db.Uuid
+  templateMaterialId String?   @db.Char(36)
   contractSnapshot   Json?
   voidedAt           DateTime?
-  voidReason         String?
+  voidReason         String? @db.Text
 
   @@unique([materialGroupId, versionNo])
   @@index([projectId, category])
@@ -372,35 +372,35 @@ model Material {
 }
 
 model FundAccount {
-  id                String    @id @default(uuid()) @db.Uuid
+  id                String    @id @default(uuid()) @db.Char(36)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
-  createdBy         String?   @db.Uuid
-  updatedBy         String?   @db.Uuid
+  createdBy         String?   @db.Char(36)
+  updatedBy         String?   @db.Char(36)
   revision          Int       @default(1)
   operationLogs     Json      @default("[]")
   deletedAt         DateTime?
-  deletedBy         String?   @db.Uuid
+  deletedBy         String?   @db.Char(36)
   name              String
   bankName          String?
   accountIdentifier String?
   currency          String    @default("HKD")
   enabled           Boolean   @default(true)
-  remark            String?
+  remark            String? @db.Text
 
   @@map("fund_accounts")
 }
 
 model SystemSetting {
-  id            String    @id @default(uuid()) @db.Uuid
+  id            String    @id @default(uuid()) @db.Char(36)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  createdBy     String?   @db.Uuid
-  updatedBy     String?   @db.Uuid
+  createdBy     String?   @db.Char(36)
+  updatedBy     String?   @db.Char(36)
   revision      Int       @default(1)
   operationLogs Json      @default("[]")
   deletedAt     DateTime?
-  deletedBy     String?   @db.Uuid
+  deletedBy     String?   @db.Char(36)
   key           String    @unique
   value         Json
 

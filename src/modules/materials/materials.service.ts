@@ -47,7 +47,7 @@ export class MaterialsService extends ResourceService {
     options?: { replacingMaterialGroupId?: string },
   ) {
     if (data.category !== "LOGO" || !data.projectId) return;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${data.projectId}))`;
+    await tx.$queryRaw`SELECT id FROM projects WHERE id = ${data.projectId} FOR UPDATE`;
     const count = await tx.material.count({
       where: {
         projectId: data.projectId,

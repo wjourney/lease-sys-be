@@ -22,7 +22,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates fonts-noto-cjk openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app /app
-RUN node node_modules/playwright/cli.js install --with-deps chromium \
+RUN node node_modules/playwright/cli.js install --with-deps --only-shell chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
 USER node

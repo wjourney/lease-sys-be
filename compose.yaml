@@ -1,17 +1,18 @@
 services:
-  postgres:
-    image: postgres:16-alpine
+  mysql:
+    image: mysql:5.7.38
     environment:
-      POSTGRES_USER: lease
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lease_local_only}
-      POSTGRES_DB: lease
+      MYSQL_ROOT_PASSWORD: lease_test_root_local_only
+      MYSQL_DATABASE: lease_test
     ports:
-      - "127.0.0.1:55432:5432"
-    volumes:
-      - lease_data:/var/lib/postgresql/data
+      - "127.0.0.1:53306:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lease -d lease"]
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -please_test_root_local_only --silent
       interval: 5s
-      retries: 10
-volumes:
-  lease_data:
+      timeout: 5s
+      retries: 20
