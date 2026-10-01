@@ -777,6 +777,29 @@ test("full workflow and authorization invariants", async (t) => {
         materials.items.find((item: any) => item.id === ids[0]).sortOrder,
         0,
       );
+      const detail = await admin.call("GET", `/projects/${project.id}`);
+      assert.equal(detail.materials.length, 4);
+      assert.equal(detail.materials[0].id, ids[0]);
+      assert.equal(
+        detail.materials[0].downloadUrl,
+        `/api/v1/materials/${ids[0]}/download`,
+      );
+      const internalFile = await admin.call("POST", "/materials", {
+        projectId: project.id,
+        category: "PROJECT_FILE",
+        title: "内部资料",
+        body: "仅内部可见",
+        visibility: "INTERNAL",
+      }, 201);
+      assert((await admin.call("GET", `/projects/${project.id}`)).materials.some(
+        (item: any) => item.id === internalFile.id,
+      ));
+      assert(!(await sales.call("GET", `/projects/${project.id}`)).materials.some(
+        (item: any) => item.id === internalFile.id,
+      ));
+      assert.equal((await admin.call("GET", "/projects")).items.find(
+        (item: any) => item.id === project.id,
+      ).materials, undefined);
       await admin.call("DELETE", `/materials/${ids[0]}`, {
         reason: "移除旧 Logo",
       });
@@ -838,6 +861,10 @@ test("full workflow and authorization invariants", async (t) => {
         refreshed.coverUrl,
         `/api/v1/materials/${uploadedPhoto.id}/download`,
       );
+      assert.equal(refreshed.materials.find((item: any) => item.id === uploadedPhoto.id).downloadUrl,
+        refreshed.coverUrl);
+      assert.equal(refreshed.materials.find((item: any) => item.id === uploadedPhoto.id).originalName,
+        "单位首图.png");
       const withCover = await admin.call("GET", "/units?pageSize=100");
       assert.equal(
         withCover.items.find((item: any) => item.id === selected.id).coverUrl,

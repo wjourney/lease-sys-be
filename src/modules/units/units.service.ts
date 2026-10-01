@@ -6,6 +6,7 @@ import { fail } from "../../common/utils/errors";
 import { number } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
 import { UnitsSchema } from "./dto/units.schema";
+import { normalizeUploadName } from "../materials/file-name";
 @Injectable()
 export class UnitsService extends ResourceService {
   readonly resource = "units";
@@ -91,5 +92,29 @@ export class UnitsService extends ResourceService {
       ? `/api/v1/materials/${firstPhoto.id}/download`
       : null;
     return x;
+  }
+  async detail(a: Actor, key: string) {
+    const unit = await super.detail(a, key);
+    const materials = await this.db.material.findMany({
+      where: {
+        unitId: key,
+        deletedAt: null,
+        isCurrent: true,
+        ...(!internal(a) ? { visibility: "SHARED" } : {}),
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+    return {
+      ...unit,
+      materials: materials.map(({ operationLogs, ...material }) => ({
+        ...material,
+        originalName: material.originalName
+          ? normalizeUploadName(material.originalName)
+          : null,
+        downloadUrl: material.storageKey
+          ? `/api/v1/materials/${material.id}/download`
+          : null,
+      })),
+    };
   }
 }

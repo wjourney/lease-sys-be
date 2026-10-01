@@ -7,6 +7,7 @@ import { ResourceService } from "../../common/resources/resource.service";
 import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { ProjectsSchema } from "./dto/projects.schema";
+import { normalizeUploadName } from "../materials/file-name";
 @Injectable()
 export class ProjectsService extends ResourceService {
   readonly resource = "projects";
@@ -129,5 +130,29 @@ export class ProjectsService extends ResourceService {
       }));
     x.coverUrl = image ? "/api/v1/materials/" + image.id + "/download" : null;
     return x;
+  }
+  async detail(a: Actor, key: string) {
+    const project = await super.detail(a, key);
+    const materials = await this.db.material.findMany({
+      where: {
+        projectId: key,
+        deletedAt: null,
+        isCurrent: true,
+        ...(!internal(a) ? { visibility: "SHARED" } : {}),
+      },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    });
+    return {
+      ...project,
+      materials: materials.map(({ operationLogs, ...material }) => ({
+        ...material,
+        originalName: material.originalName
+          ? normalizeUploadName(material.originalName)
+          : null,
+        downloadUrl: material.storageKey
+          ? `/api/v1/materials/${material.id}/download`
+          : null,
+      })),
+    };
   }
 }
