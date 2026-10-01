@@ -22,6 +22,14 @@ CLI and Chromium. `deploy.sh` applies `prisma migrate deploy` before replacing
 the API container. It intentionally never runs the development seed in
 production.
 
+The CentOS 7 host's Docker seccomp filter returns `EPERM` for PostgreSQL's
+`pwritev2` call; `strace` confirmed this on the 3.10 kernel. The database uses
+`seccomp-postgres.json`, derived from the [Moby 25.0.4 default profile](https://github.com/moby/moby/blob/v25.0.4/profiles/seccomp/default.json)
+(Apache-2.0). Its syscall allowlist is unchanged; only the default rejection
+errno is `ENOSYS` instead of `EPERM`, so libc can fall back for unavailable
+syscalls. This profile applies only to `db`. Re-test the stock profile after
+upgrading the host kernel.
+
 GitHub Actions builds each image on pushes to `master`, stores it in GHCR under
 the commit SHA, and streams a compressed release archive containing a Git bundle
 and the image over SSH to the root-owned `/usr/local/sbin/lease-sys-deploy`

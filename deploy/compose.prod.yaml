@@ -4,6 +4,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt:
+      - seccomp=/srv/lease-sys/lease-sys-be/deploy/seccomp-postgres.json
     environment:
       POSTGRES_USER: lease
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in config/stack.env}
