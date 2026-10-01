@@ -65,10 +65,17 @@ export class MaterialsController {
   @Get(":id/download") async download(
     @Req() r: any,
     @Param("id") key: string,
+    @Query("download") download: string | undefined,
     @Res() res: any,
   ) {
     const f = await this.files.download(r.actor, key);
-    await sendFile(r, res, this.files.storage, f);
+    await sendFile(
+      r,
+      res,
+      this.files.storage,
+      f,
+      download === "1" ? "attachment" : "inline",
+    );
   }
 
   @Get() list(@Req() r: any, @Query() q: any) {

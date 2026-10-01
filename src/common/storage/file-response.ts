@@ -35,6 +35,7 @@ export async function sendFile(
   res: Response,
   storage: StorageService,
   file: StoredReference & { name: string; type: string },
+  disposition: "inline" | "attachment" = "inline",
 ) {
   const size = await storage.size(file);
   const range = parseRange(
@@ -55,7 +56,7 @@ export async function sendFile(
   res.setHeader("Content-Type", file.type);
   res.setHeader(
     "Content-Disposition",
-    `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    `${disposition}; filename*=UTF-8''${encodeURIComponent(file.name)}`,
   );
   res.setHeader("Content-Length", range ? range.end - range.start + 1 : size);
   if (range)

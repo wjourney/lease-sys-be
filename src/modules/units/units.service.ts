@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
-import { Actor } from "../../common/auth/actor";
+import { Actor, internal } from "../../common/auth/actor";
 import { ResourceService } from "../../common/resources/resource.service";
 import { fail } from "../../common/utils/errors";
 import { number } from "../../common/utils/value";
@@ -75,6 +75,21 @@ export class UnitsService extends ResourceService {
       },
     });
     x.occupancyStatus = o?.occupancyState ?? "AVAILABLE";
+    const firstPhoto = await this.db.material.findFirst({
+      where: {
+        unitId: row.id,
+        category: "PHOTO",
+        storageKey: { not: null },
+        deletedAt: null,
+        isCurrent: true,
+        ...(!internal(a) ? { visibility: "SHARED" as const } : {}),
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true },
+    });
+    x.coverUrl = firstPhoto
+      ? `/api/v1/materials/${firstPhoto.id}/download`
+      : null;
     return x;
   }
 }

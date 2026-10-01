@@ -809,6 +809,40 @@ test("full workflow and authorization invariants", async (t) => {
           .sort((a, b) => b - a),
       );
       const selected = units.items[0];
+      const photo = new FormData();
+      photo.append(
+        "payload",
+        JSON.stringify({
+          unitId: selected.id,
+          category: "PHOTO",
+          title: "单位首图.png",
+          visibility: "SHARED",
+        }),
+      );
+      photo.append(
+        "file",
+        new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10])], {
+          type: "image/png",
+        }),
+        "单位首图.png",
+      );
+      const photoResponse = await fetch(base + "/materials/upload", {
+        method: "POST",
+        headers: { Cookie: admin.cookies, "X-CSRF-Token": admin.csrf },
+        body: photo,
+      });
+      assert.equal(photoResponse.status, 201);
+      const uploadedPhoto = await photoResponse.json();
+      const refreshed = await admin.call("GET", `/units/${selected.id}`);
+      assert.equal(
+        refreshed.coverUrl,
+        `/api/v1/materials/${uploadedPhoto.id}/download`,
+      );
+      const withCover = await admin.call("GET", "/units?pageSize=100");
+      assert.equal(
+        withCover.items.find((item: any) => item.id === selected.id).coverUrl,
+        refreshed.coverUrl,
+      );
       const selectedRent = Number(selected.referenceRent);
       const exact = await admin.call(
         "GET",
@@ -905,7 +939,7 @@ test("full workflow and authorization invariants", async (t) => {
       upload.append(
         "file",
         new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" }),
-        "original.pdf",
+        "租赁资料.pdf",
       );
       const uploadedResponse = await fetch(base + "/materials/upload", {
         method: "POST",
@@ -921,7 +955,7 @@ test("full workflow and authorization invariants", async (t) => {
         201,
       );
       assert.equal(revisedFile.storageKey, uploaded.storageKey);
-      assert.equal(revisedFile.originalName, "original.pdf");
+      assert.equal(revisedFile.originalName, "租赁资料.pdf");
       assert.equal(revisedFile.title, "文件版本修改");
       const download = await fetch(
         base + `/materials/${revisedFile.id}/download`,
@@ -930,7 +964,20 @@ test("full workflow and authorization invariants", async (t) => {
         },
       );
       assert.equal(download.status, 200);
+      assert.match(
+        download.headers.get("content-disposition") ?? "",
+        /inline; filename\*=UTF-8''%E7%A7%9F%E8%B5%81%E8%B5%84%E6%96%99\.pdf/,
+      );
       assert.equal((await download.text()).slice(0, 4), "%PDF");
+      const attachment = await fetch(
+        base + `/materials/${revisedFile.id}/download?download=1`,
+        { headers: { Cookie: admin.cookies } },
+      );
+      assert.equal(attachment.status, 200);
+      assert.match(
+        attachment.headers.get("content-disposition") ?? "",
+        /^attachment; filename\*=/,
+      );
     },
   );
   await t.test(

@@ -9,6 +9,7 @@ import {
 import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { MaterialsService } from "./materials.service";
+import { normalizeUploadName } from "./file-name";
 @Injectable()
 export class MaterialFilesService {
   constructor(
@@ -58,7 +59,7 @@ export class MaterialFilesService {
           tx,
           "materials",
           data,
-          { ...stored, originalName: file.originalname, mimeType: detected },
+          { ...stored, originalName: normalizeUploadName(file.originalname), mimeType: detected },
           a,
           "上传文件",
         ),
@@ -78,7 +79,7 @@ export class MaterialFilesService {
     return {
       storageProvider: m.storageProvider,
       storageKey: m.storageKey,
-      name: m.originalName ?? m.title,
+      name: normalizeUploadName(m.originalName ?? m.title),
       type: m.mimeType ?? "application/octet-stream",
     };
   }

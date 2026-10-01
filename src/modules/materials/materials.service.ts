@@ -6,6 +6,7 @@ import { ResourceService } from "../../common/resources/resource.service";
 import { demand, fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { MaterialsSchema } from "./dto/materials.schema";
+import { normalizeUploadName } from "./file-name";
 @Injectable()
 export class MaterialsService extends ResourceService {
   readonly resource = "materials";
@@ -17,6 +18,12 @@ export class MaterialsService extends ResourceService {
     access: AccessService,
   ) {
     super(db, access);
+  }
+  async enrich(a: Actor, row: any) {
+    const result = await super.enrich(a, row);
+    if (result.originalName)
+      result.originalName = normalizeUploadName(result.originalName);
+    return result;
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
     if (["VIDEO", "PROJECT_FILE"].includes(data.category) && !data.projectId && !data.unitId)
