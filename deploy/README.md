@@ -23,9 +23,10 @@ the API container. It intentionally never runs the development seed in
 production.
 
 GitHub Actions builds each image on pushes to `master`, stores it in GHCR under
-the commit SHA, and streams a compressed image archive over SSH to the
-root-owned `/usr/local/sbin/lease-sys-deploy` wrapper. Only the built image is
-sent to the host; GitHub credentials stay inside the Actions runner. The wrapper
+the commit SHA, and streams a compressed release archive containing a Git bundle
+and the image over SSH to the root-owned `/usr/local/sbin/lease-sys-deploy`
+wrapper. GitHub credentials stay inside the Actions runner; the host does not
+need outbound access to GitHub or GHCR. The wrapper
 uses a host-wide lock so the two repository workflows cannot deploy at once.
 For manual rollback, restore a previous image reference in `versions.env` and
 recreate the affected service; database migrations require separate review.

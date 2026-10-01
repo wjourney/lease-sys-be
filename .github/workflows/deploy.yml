@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.1
@@ -57,8 +59,12 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          release_dir="$RUNNER_TEMP/lease-release"
+          mkdir -p "$release_dir"
+          git bundle create "$release_dir/source.bundle" master
           docker pull "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
-          docker save "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA" | gzip -1 | \
+          docker save -o "$release_dir/image.tar" "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
+          tar -C "$release_dir" -cf - source.bundle image.tar | gzip -1 | \
             ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             lease-deploy@47.117.136.208 \
             "sudo /usr/local/sbin/lease-sys-deploy api $GITHUB_SHA"

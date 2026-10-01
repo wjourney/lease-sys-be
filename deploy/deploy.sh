@@ -25,13 +25,19 @@ else
   image="ghcr.io/wjourney/lease-sys-fe:$revision"
 fi
 
-# GitHub Actions sends the built image over the SSH stream. Registry credentials
-# stay on the runner; the production host receives only the image archive.
-gzip -dc | docker load >/dev/null
+# GitHub Actions sends a Git bundle and built image over SSH. The host never
+# needs GitHub or registry credentials, nor outbound GitHub connectivity.
+stage=$(mktemp -d "$root/.deploy.XXXXXX")
+trap 'rm -rf "$stage"' EXIT
+gzip -dc | tar -xf - -C "$stage" source.bundle image.tar
+test -s "$stage/source.bundle"
+test -s "$stage/image.tar"
+docker load -i "$stage/image.tar" >/dev/null
 docker image inspect "$image" >/dev/null
 
 cd "$repo"
-git fetch --quiet origin '+refs/heads/master:refs/remotes/origin/master'
+git bundle verify "$stage/source.bundle" >/dev/null
+git fetch --quiet "$stage/source.bundle" 'refs/heads/master:refs/remotes/origin/master'
 if [[ "$(git rev-parse --verify refs/remotes/origin/master)" != "$revision" ]]; then
   echo "Skipping obsolete deployment: $service $revision" >&2
   exit 0
