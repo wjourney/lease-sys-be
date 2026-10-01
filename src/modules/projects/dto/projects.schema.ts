@@ -1,0 +1,49 @@
+import { z } from "zod";
+import { date, money, opt, text } from "../../../common/validation/fields";
+const ProjectExtraSchema = z
+  .object({
+    developmentDate: z.iso.date().optional(),
+    landLeaseEndDate: z.iso.date().optional(),
+    salesStatus: z.enum(["现售", "待售", "售罄"]).optional(),
+    buildingStatus: z.enum(["现楼", "楼花", "建设中"]).optional(),
+    usage: z.enum(["住宅", "商业", "办公", "综合"]).optional(),
+    areaRange: opt,
+    unitInterval: opt,
+    managementFee: opt,
+    lawyerFirm: opt,
+    nearbySchools: opt,
+    website: z.url().optional(),
+    salesOffice: opt,
+  })
+  .passthrough();
+
+export const ProjectsSchema = z.object({
+  name: text,
+  nameEn: opt,
+  region: text,
+  address: text,
+  propertyName: opt,
+  developer: opt,
+  completionDate: date.nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  description: opt,
+  facilities: z.array(z.string()).optional(),
+  extra: ProjectExtraSchema.optional(),
+  salesCanViewExactRent: z.boolean().optional(),
+  typeConfigs: z
+    .array(
+      z.object({
+        code: text,
+        name: opt,
+        minArea: money.optional(),
+        maxArea: money.optional(),
+        minRent: money.optional(),
+        maxRent: money.optional(),
+      }),
+    )
+    .optional(),
+  lessorProfile: z.record(z.string(), z.unknown()).optional(),
+  status: z.enum(["ACTIVE", "DISABLED"]).optional(),
+});
+export type ProjectsInput = z.input<typeof ProjectsSchema>;

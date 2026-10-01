@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lease
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lease_local_only}
+      POSTGRES_DB: lease
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - lease_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lease -d lease"]
+      interval: 5s
+      retries: 10
+volumes:
+  lease_data:

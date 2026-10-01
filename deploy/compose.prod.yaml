@@ -1,0 +1,46 @@
+name: lease-sys
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lease
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in config/stack.env}
+      POSTGRES_DB: lease
+    volumes:
+      - /srv/lease-sys/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lease -d lease"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ${API_IMAGE:?Set API_IMAGE in config/versions.env}
+    restart: unless-stopped
+    init: true
+    shm_size: 512m
+    env_file:
+      - /srv/lease-sys/config/api.env
+    volumes:
+      - /srv/lease-sys/data/uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/v1/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+
+  web:
+    image: ${WEB_IMAGE:?Set WEB_IMAGE in config/versions.env}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"

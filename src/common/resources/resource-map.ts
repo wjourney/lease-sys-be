@@ -1,0 +1,38 @@
+export const delegate: any = {
+  "sales-companies": "salesCompany",
+  users: "user",
+  projects: "project",
+  units: "unit",
+  orders: "order",
+  incomes: "income",
+  expenses: "expense",
+  commissions: "commission",
+  invoices: "invoice",
+  materials: "material",
+  "fund-accounts": "fundAccount",
+  settings: "systemSetting",
+};
+export const tables: any = {
+  "sales-companies": "sales_companies",
+  users: "users",
+  projects: "projects",
+  units: "units",
+  orders: "orders",
+  incomes: "incomes",
+  expenses: "expenses",
+  commissions: "commissions",
+  invoices: "invoices",
+  materials: "materials",
+  "fund-accounts": "fund_accounts",
+  settings: "system_settings",
+};
+export const ownerMap: any = {
+  projectId: "projects",
+  unitId: "units",
+  orderId: "orders",
+  incomeId: "incomes",
+  expenseId: "expenses",
+  invoiceId: "invoices",
+  salesCompanyId: "sales-companies",
+  userId: "users",
+};

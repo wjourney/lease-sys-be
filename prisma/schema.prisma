@@ -1,0 +1,408 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdBy      String?   @db.Uuid
+  updatedBy      String?   @db.Uuid
+  revision       Int       @default(1)
+  operationLogs  Json      @default("[]")
+  deletedAt      DateTime?
+  deletedBy      String?   @db.Uuid
+  username       String    @unique
+  passwordHash   String
+  authVersion    Int       @default(1)
+  role           String
+  name           String
+  nameEn         String?
+  avatarStorageKey String?
+  avatarMimeType   String?
+  phone          String?
+  email          String?
+  salesCompanyId String?   @db.Uuid
+  branchCode     String?
+  positionCode   String?
+  status         String    @default("ACTIVE")
+  expiresAt      DateTime?
+  lastLoginAt    DateTime?
+
+  @@index([salesCompanyId, role])
+  @@map("users")
+}
+
+model SalesCompany {
+  id                    String    @id @default(uuid()) @db.Uuid
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  createdBy             String?   @db.Uuid
+  updatedBy             String?   @db.Uuid
+  revision              Int       @default(1)
+  operationLogs         Json      @default("[]")
+  deletedAt             DateTime?
+  deletedBy             String?   @db.Uuid
+  companyNo             String    @unique
+  name                  String
+  nameEn                String?
+  contactName           String?
+  phone                 String?
+  email                 String?
+  address               String?
+  serviceArea           String?
+  registrationNo        String?
+  registrationExpiresOn DateTime? @db.Date
+  serviceStartsOn       DateTime? @db.Date
+  serviceEndsOn         DateTime? @db.Date
+  branches              Json      @default("[]")
+  positions             Json      @default("[]")
+  status                String    @default("ACTIVE")
+
+  @@map("sales_companies")
+}
+
+model Project {
+  id                    String    @id @default(uuid()) @db.Uuid
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  createdBy             String?   @db.Uuid
+  updatedBy             String?   @db.Uuid
+  revision              Int       @default(1)
+  operationLogs         Json      @default("[]")
+  deletedAt             DateTime?
+  deletedBy             String?   @db.Uuid
+  code                  String    @unique
+  name                  String
+  nameEn                String?
+  region                String
+  address               String
+  propertyName          String?
+  developer             String?
+  completionDate        DateTime? @db.Date
+  longitude             Decimal?  @db.Decimal(12, 8)
+  latitude              Decimal?  @db.Decimal(12, 8)
+  description           String?
+  facilities            Json      @default("[]")
+  extra                 Json      @default("{}")
+  salesCanViewExactRent Boolean   @default(false)
+  typeConfigs           Json      @default("[]")
+  lessorProfile         Json      @default("{}")
+  status                String    @default("ACTIVE")
+
+  @@map("projects")
+}
+
+model Unit {
+  id             String    @id @default(uuid()) @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdBy      String?   @db.Uuid
+  updatedBy      String?   @db.Uuid
+  revision       Int       @default(1)
+  operationLogs  Json      @default("[]")
+  deletedAt      DateTime?
+  deletedBy      String?   @db.Uuid
+  projectId      String    @db.Uuid
+  unitNo         String
+  unitTypeCode   String
+  building       String?
+  floor          String?
+  roomNo         String?
+  area           Decimal   @db.Decimal(12, 2)
+  layout         String?
+  decoration     String?
+  referenceRent  Decimal   @db.Decimal(18, 2)
+  minRent        Decimal   @db.Decimal(18, 2)
+  maxRent        Decimal   @db.Decimal(18, 2)
+  minLeaseMonths Int       @default(1)
+  commissionNote String?
+  extra          Json      @default("{}")
+  enabled        Boolean   @default(true)
+
+  @@unique([projectId, unitNo])
+  @@index([projectId, enabled])
+  @@map("units")
+}
+
+model Order {
+  id                        String    @id @default(uuid()) @db.Uuid
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+  createdBy                 String?   @db.Uuid
+  updatedBy                 String?   @db.Uuid
+  revision                  Int       @default(1)
+  operationLogs             Json      @default("[]")
+  deletedAt                 DateTime?
+  deletedBy                 String?   @db.Uuid
+  orderNo                   String    @unique
+  projectId                 String    @db.Uuid
+  unitId                    String    @db.Uuid
+  salesCompanyId            String    @db.Uuid
+  salesUserId               String    @db.Uuid
+  tenantType                String    @default("PERSON")
+  tenantName                String
+  tenantRegistrationNo      String?
+  tenantContactName         String?
+  tenantPhone               String?
+  tenantEmail               String?
+  startsOn                  DateTime  @db.Date
+  endsOn                    DateTime  @db.Date
+  monthlyRent               Decimal   @db.Decimal(18, 2)
+  depositAmount             Decimal   @db.Decimal(18, 2)
+  currency                  String    @default("HKD")
+  paymentIntervalMonths     Int       @default(1)
+  rentDueDay                Int       @default(1)
+  billLeadDays              Int       @default(7)
+  firstPeriodProration      Boolean   @default(true)
+  lastPeriodProration       Boolean   @default(true)
+  nextBillOn                DateTime? @db.Date
+  status                    String    @default("PENDING")
+  firstPaymentRegisteredAt  DateTime?
+  occupancyState            String    @default("LOCKED")
+  actualTerminationOn       DateTime? @db.Date
+  handoverStatus            String    @default("PENDING")
+  handedOverAt              DateTime?
+  handoverNote              String?
+  depositDeductionAmount    Decimal   @default(0) @db.Decimal(18, 2)
+  depositDeductionReason    String?
+  depositSettledAt          DateTime?
+  tenantSnapshot            Json      @default("{}")
+  unitSnapshot              Json      @default("{}")
+  salesSnapshot             Json      @default("{}")
+  currentContractMaterialId String?   @db.Uuid
+  remark                    String?
+
+  @@index([salesCompanyId, salesUserId, status])
+  @@index([unitId, startsOn, endsOn])
+  @@map("orders")
+}
+
+model Income {
+  id               String    @id @default(uuid()) @db.Uuid
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  createdBy        String?   @db.Uuid
+  updatedBy        String?   @db.Uuid
+  revision         Int       @default(1)
+  operationLogs    Json      @default("[]")
+  deletedAt        DateTime?
+  deletedBy        String?   @db.Uuid
+  recordNo         String    @unique
+  recordType       String
+  parentId         String?   @db.Uuid
+  orderId          String?   @db.Uuid
+  projectId        String?   @db.Uuid
+  unitId           String?   @db.Uuid
+  feeType          String
+  amount           Decimal   @db.Decimal(18, 2)
+  adjustmentAmount Decimal   @default(0) @db.Decimal(18, 2)
+  currency         String    @default("HKD")
+  periodStart      DateTime? @db.Date
+  periodEnd        DateTime? @db.Date
+  dueOn            DateTime? @db.Date
+  receivedOn       DateTime? @db.Date
+  fundAccountId    String?   @db.Uuid
+  paymentMethod    String?
+  bankReference    String?
+  payerName        String?
+  payerEmail       String?
+  status           String    @default("OPEN")
+  confirmedBy      String?   @db.Uuid
+  confirmedAt      DateTime?
+  rejectionReason  String?
+  sourceKey        String?   @unique
+  recurrenceRule   Json      @default("{}")
+  nextGenerationOn DateTime? @db.Date
+  remark           String?
+
+  @@index([parentId, status])
+  @@index([orderId, recordType])
+  @@index([status, dueOn])
+  @@map("incomes")
+}
+
+model Expense {
+  id               String    @id @default(uuid()) @db.Uuid
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  createdBy        String?   @db.Uuid
+  updatedBy        String?   @db.Uuid
+  revision         Int       @default(1)
+  operationLogs    Json      @default("[]")
+  deletedAt        DateTime?
+  deletedBy        String?   @db.Uuid
+  expenseNo        String    @unique
+  orderId          String?   @db.Uuid
+  projectId        String?   @db.Uuid
+  unitId           String?   @db.Uuid
+  commissionId     String?   @db.Uuid
+  originalIncomeId String?   @db.Uuid
+  feeType          String
+  amount           Decimal   @db.Decimal(18, 2)
+  paidAmount       Decimal   @default(0) @db.Decimal(18, 2)
+  currency         String    @default("HKD")
+  dueOn            DateTime? @db.Date
+  paidOn           DateTime? @db.Date
+  fundAccountId    String?   @db.Uuid
+  paymentMethod    String?
+  bankReference    String?
+  payeeName        String
+  status           String    @default("UNPAID")
+  sourceKey        String?   @unique
+  remark           String?
+
+  @@index([commissionId, status])
+  @@index([orderId, status])
+  @@map("expenses")
+}
+
+model Commission {
+  id             String    @id @default(uuid()) @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  createdBy      String?   @db.Uuid
+  updatedBy      String?   @db.Uuid
+  revision       Int       @default(1)
+  operationLogs  Json      @default("[]")
+  deletedAt      DateTime?
+  deletedBy      String?   @db.Uuid
+  commissionNo   String    @unique
+  orderId        String    @db.Uuid
+  salesCompanyId String    @db.Uuid
+  salesUserId    String    @db.Uuid
+  mode           String    @default("MONTHLY")
+  periodStart    DateTime  @db.Date
+  periodEnd      DateTime  @db.Date
+  dueOn          DateTime  @db.Date
+  amount         Decimal?  @db.Decimal(18, 2)
+  currency       String    @default("HKD")
+  status         String    @default("OPEN")
+  remark         String?
+
+  @@unique([orderId, mode, periodStart])
+  @@index([salesCompanyId, salesUserId])
+  @@map("commissions")
+}
+
+model Invoice {
+  id                String    @id @default(uuid()) @db.Uuid
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?   @db.Uuid
+  updatedBy         String?   @db.Uuid
+  revision          Int       @default(1)
+  operationLogs     Json      @default("[]")
+  deletedAt         DateTime?
+  deletedBy         String?   @db.Uuid
+  invoiceNo         String    @unique
+  incomeId          String    @db.Uuid
+  amount            Decimal   @db.Decimal(18, 2)
+  currency          String    @default("HKD")
+  issuedOn          DateTime  @db.Date
+  snapshot          Json
+  status            String    @default("ACTIVE")
+  replacesInvoiceId String?   @db.Uuid
+  voidReason        String?
+  renderStatus      String    @default("PENDING")
+  renderAttempts    Int       @default(0)
+  renderError       String?
+  renderNextRetryAt DateTime?
+  emailTo           String?
+  emailSubject      String?
+  emailStatus       String    @default("IDLE")
+  emailRequestId    String?
+  emailAttempts     Int       @default(0)
+  emailNextRetryAt  DateTime?
+  emailLastError    String?
+  lastSentAt        DateTime?
+
+  @@index([incomeId])
+  @@map("invoices")
+}
+
+model Material {
+  id                 String    @id @default(uuid()) @db.Uuid
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  createdBy          String?   @db.Uuid
+  updatedBy          String?   @db.Uuid
+  revision           Int       @default(1)
+  operationLogs      Json      @default("[]")
+  deletedAt          DateTime?
+  deletedBy          String?   @db.Uuid
+  projectId          String?   @db.Uuid
+  unitId             String?   @db.Uuid
+  orderId            String?   @db.Uuid
+  incomeId           String?   @db.Uuid
+  expenseId          String?   @db.Uuid
+  invoiceId          String?   @db.Uuid
+  salesCompanyId     String?   @db.Uuid
+  userId             String?   @db.Uuid
+  category           String
+  visibility         String    @default("SHARED")
+  title              String
+  description        String?
+  body               String?
+  sourceUrl          String?
+  storageKey         String?
+  originalName       String?
+  mimeType           String?
+  sizeBytes          Int?
+  checksum           String?
+  materialGroupId    String    @default(uuid()) @db.Uuid
+  versionNo          Int       @default(1)
+  isCurrent          Boolean   @default(true)
+  status             String    @default("ACTIVE")
+  sortOrder          Int       @default(0)
+  templateMaterialId String?   @db.Uuid
+  contractSnapshot   Json?
+  voidedAt           DateTime?
+  voidReason         String?
+
+  @@unique([materialGroupId, versionNo])
+  @@index([projectId, category])
+  @@index([orderId, category])
+  @@map("materials")
+}
+
+model FundAccount {
+  id                String    @id @default(uuid()) @db.Uuid
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  createdBy         String?   @db.Uuid
+  updatedBy         String?   @db.Uuid
+  revision          Int       @default(1)
+  operationLogs     Json      @default("[]")
+  deletedAt         DateTime?
+  deletedBy         String?   @db.Uuid
+  name              String
+  bankName          String?
+  accountIdentifier String?
+  currency          String    @default("HKD")
+  enabled           Boolean   @default(true)
+  remark            String?
+
+  @@map("fund_accounts")
+}
+
+model SystemSetting {
+  id            String    @id @default(uuid()) @db.Uuid
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdBy     String?   @db.Uuid
+  updatedBy     String?   @db.Uuid
+  revision      Int       @default(1)
+  operationLogs Json      @default("[]")
+  deletedAt     DateTime?
+  deletedBy     String?   @db.Uuid
+  key           String    @unique
+  value         Json
+
+  @@map("system_settings")
+}
