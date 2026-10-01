@@ -30,12 +30,13 @@ fi
 gzip -dc | docker load >/dev/null
 docker image inspect "$image" >/dev/null
 
-git -C "$repo" fetch --quiet origin master
-if [[ "$(git -C "$repo" rev-parse origin/master)" != "$revision" ]]; then
+cd "$repo"
+git fetch --quiet origin master
+if [[ "$(git rev-parse origin/master)" != "$revision" ]]; then
   echo "Skipping obsolete deployment: $service $revision" >&2
   exit 0
 fi
-git -C "$repo" checkout --quiet --detach --force "$revision"
+git checkout --quiet --detach --force "$revision"
 
 versions="$root/config/versions.env"
 old_api=$(sed -n 's/^API_IMAGE=//p' "$versions")

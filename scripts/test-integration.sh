@@ -10,6 +10,7 @@ docker exec lease-sys-postgres-1 sh -c 'psql -U lease -d postgres -tAc "SELECT 1
 export DATABASE_URL='postgresql://lease:lease_local_only@127.0.0.1:55432/lease_test?schema=public'
 export PORT=3002
 export APP_ORIGIN='http://127.0.0.1:5174,http://localhost:5174'
+export JWT_SECRET='lease-test-only-secret-never-use-in-production'
 export SEED_PASSWORD='ChangeMe123!'
 export TEST_API_URL='http://127.0.0.1:3002/api/v1'
 export UPLOAD_DIR="$(mktemp -d /tmp/lease-test-uploads.XXXXXX)"
