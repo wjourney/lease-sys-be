@@ -277,6 +277,12 @@ test("full workflow and authorization invariants", async (t) => {
         (await admin.call("GET", `/users/${secondAdmin.id}`)).status,
         "ACTIVE",
       );
+      await admin.call(
+        "DELETE",
+        `/users/${secondAdmin.id}`,
+        { reason: "管理员账号受保护" },
+        400,
+      );
       const activeMember = await admin.call("GET", `/users/${created.id}`);
       await admin.call(
         "PATCH",

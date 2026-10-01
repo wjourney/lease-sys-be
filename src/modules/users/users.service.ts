@@ -245,5 +245,6 @@ export class UsersService extends ResourceService {
   }
   protected async beforeRemove(a: Actor, tx: any, row: any) {
     if (row.id === a.id) fail("不能删除自己的账号");
+    if (row.role === "SUPER_ADMIN") fail("不能删除超级管理员账号");
   }
 }
