@@ -885,4 +885,103 @@ test("full workflow and authorization invariants", async (t) => {
       assert.equal((await download.text()).slice(0, 4), "%PDF");
     },
   );
+  await t.test(
+    "protected file streams support seeking, HEAD and strict size limits",
+    async () => {
+      const bytes = Buffer.concat([
+        Buffer.from([0, 0, 0, 24]),
+        Buffer.from("ftypmp42"),
+        Buffer.alloc(2048, 42),
+      ]);
+      const unit = await admin.call("GET", `/units/${order.unitId}`);
+      const body = new FormData();
+      body.append(
+        "payload",
+        JSON.stringify({
+          unitId: unit.id,
+          category: "VIDEO",
+          title: "seek-test.mp4",
+          visibility: "INTERNAL",
+        }),
+      );
+      body.append(
+        "file",
+        new Blob([bytes], { type: "video/mp4" }),
+        "seek-test.mp4",
+      );
+      const uploaded = await fetch(base + "/materials/upload", {
+        method: "POST",
+        headers: { Cookie: admin.cookies, "X-CSRF-Token": admin.csrf },
+        body,
+      });
+      assert.equal(uploaded.status, 201);
+      const file = await uploaded.json();
+      assert.equal(file.storageProvider, "LOCAL");
+      const path = `/materials/${file.id}/download`;
+      const partial = await fetch(base + path, {
+        headers: { Cookie: admin.cookies, Range: "bytes=4-11" },
+      });
+      assert.equal(partial.status, 206);
+      assert.equal(
+        partial.headers.get("content-range"),
+        `bytes 4-11/${bytes.length}`,
+      );
+      assert.equal(partial.headers.get("content-length"), "8");
+      assert.equal(await partial.text(), "ftypmp42");
+      const suffix = await fetch(base + path, {
+        headers: { Cookie: admin.cookies, Range: "bytes=-8" },
+      });
+      assert.equal(suffix.status, 206);
+      assert.deepEqual(
+        Buffer.from(await suffix.arrayBuffer()),
+        bytes.subarray(-8),
+      );
+      const invalid = await fetch(base + path, {
+        headers: { Cookie: admin.cookies, Range: "bytes=999999-" },
+      });
+      assert.equal(invalid.status, 416);
+      assert.equal(
+        invalid.headers.get("content-range"),
+        `bytes */${bytes.length}`,
+      );
+      const head = await fetch(base + path, {
+        method: "HEAD",
+        headers: { Cookie: admin.cookies },
+      });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get("content-length"), String(bytes.length));
+      assert.equal((await head.arrayBuffer()).byteLength, 0);
+      await sales.call("GET", path, undefined, 404);
+      assert.equal((await fetch(base + path)).status, 401);
+      const version = await admin.call(
+        "POST",
+        `/materials/${file.id}/versions`,
+        { payload: JSON.stringify({ title: "metadata-only" }) },
+        201,
+      );
+      assert.equal(version.storageProvider, file.storageProvider);
+      assert.equal(version.storageKey, file.storageKey);
+      await admin.call("DELETE", `/materials/${file.id}`, {
+        reason: "retain history bytes",
+      });
+      const historyDownload = await fetch(
+        base + `/materials/${version.id}/download`,
+        { headers: { Cookie: admin.cookies } },
+      );
+      assert.equal(historyDownload.status, 200);
+      assert.deepEqual(Buffer.from(await historyDownload.arrayBuffer()), bytes);
+      const tooLarge = new FormData();
+      tooLarge.append(
+        "file",
+        new Blob([Buffer.alloc(2 * 1024 * 1024 + 1)], { type: "image/png" }),
+        "too-large.png",
+      );
+      const rejected = await fetch(base + `/users/${a.id}/avatar`, {
+        method: "POST",
+        headers: { Cookie: admin.cookies, "X-CSRF-Token": admin.csrf },
+        body: tooLarge,
+      });
+      assert.equal(rejected.status, 413);
+    },
+  );
 });

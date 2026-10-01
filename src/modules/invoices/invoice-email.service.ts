@@ -1,12 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import nodemailer from "nodemailer";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, financial } from "../../common/auth/actor";
 import { lock, update } from "../../common/database/record-mutations";
-import { LocalStorageService } from "../../common/storage/local-storage.service";
+import { StorageService } from "../../common/storage/storage.service";
 import { demand, fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 @Injectable()
@@ -14,7 +12,7 @@ export class InvoiceEmailService {
   constructor(
     @Inject(PrismaService) readonly db: PrismaService,
     @Inject(AccessService) readonly access: AccessService,
-    @Inject(LocalStorageService) readonly storage: LocalStorageService,
+    @Inject(StorageService) readonly storage: StorageService,
   ) {}
   async send(a: Actor, key: string, body: any) {
     demand(financial(a));
@@ -115,7 +113,10 @@ export class InvoiceEmailService {
         attachments: [
           {
             filename: inv.invoiceNo + ".pdf",
-            content: await readFile(resolve(this.storage.root(), m.storageKey)),
+            content: await this.storage.read({
+              storageProvider: m.storageProvider,
+              storageKey: m.storageKey,
+            }),
           },
         ],
       });

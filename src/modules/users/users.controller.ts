@@ -37,11 +37,9 @@ export class UsersController {
     @Param("id") id: string,
     @Res() res: any,
   ) {
-    const avatar = await this.service.avatar(r.actor, id);
-    res.setHeader("Content-Type", avatar.type);
-    res.setHeader("Cache-Control", "private, no-store");
-    res.send(avatar.buffer);
+    await this.service.sendAvatar(r.actor, id, r, res);
   }
+
   @Post(":id/avatar")
   @UseInterceptors(
     FileInterceptor("file", {

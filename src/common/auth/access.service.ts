@@ -111,6 +111,7 @@ export class AccessService {
         ? `/api/v1/users/${row.id}/avatar`
         : null;
       delete x.avatarStorageKey;
+      delete x.avatarStorageProvider;
       delete x.avatarMimeType;
     }
     if (!internal(a) && r === "projects") {

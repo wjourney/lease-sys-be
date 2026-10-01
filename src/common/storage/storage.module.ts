@@ -1,8 +1,10 @@
 import { Module } from "@nestjs/common";
-import { LocalStorageService } from "./local-storage.service";
+import { DatabaseModule } from "../../database/database.module";
+import { StorageService } from "./storage.service";
 import { PdfService } from "./pdf.service";
 @Module({
-  providers: [LocalStorageService, PdfService],
-  exports: [LocalStorageService, PdfService],
+  imports: [DatabaseModule],
+  providers: [StorageService, PdfService],
+  exports: [StorageService, PdfService],
 })
 export class StorageModule {}

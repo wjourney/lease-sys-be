@@ -1,3 +1,4 @@
+import { sendFile } from "../../common/storage/file-response";
 import {
   Body,
   Controller,
@@ -67,14 +68,9 @@ export class MaterialsController {
     @Res() res: any,
   ) {
     const f = await this.files.download(r.actor, key);
-    res.setHeader("Content-Type", f.type);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
-    );
-    res.setHeader("Cache-Control", "private, no-store");
-    res.send(f.buffer);
+    await sendFile(r, res, this.files.storage, f);
   }
+
   @Get() list(@Req() r: any, @Query() q: any) {
     return this.service.list(r.actor, q);
   }

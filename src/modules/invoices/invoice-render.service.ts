@@ -2,7 +2,10 @@ import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, financial } from "../../common/auth/actor";
 import { insert, lock, update } from "../../common/database/record-mutations";
-import { LocalStorageService } from "../../common/storage/local-storage.service";
+import {
+  StoredFile,
+  StorageService,
+} from "../../common/storage/storage.service";
 import { PdfService } from "../../common/storage/pdf.service";
 import { demand, fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
@@ -11,7 +14,7 @@ export class InvoiceRenderService {
   constructor(
     @Inject(PrismaService) readonly db: PrismaService,
     @Inject(AccessService) readonly access: AccessService,
-    @Inject(LocalStorageService) readonly storage: LocalStorageService,
+    @Inject(StorageService) readonly storage: StorageService,
     @Inject(PdfService) readonly pdfRenderer: PdfService,
   ) {}
   async render(a: Actor, key: string) {
@@ -31,6 +34,7 @@ export class InvoiceRenderService {
       },
     });
     if (!claimed.count) fail("发票正在生成");
+    let file: StoredFile | undefined;
     try {
       const s = inv.snapshot as any;
       const buffer = await this.pdfRenderer.pdf(
@@ -50,7 +54,7 @@ export class InvoiceRenderService {
           ["金额", `${inv.currency} ${inv.amount}`],
         ]),
       );
-      const file = await this.storage.save(buffer);
+      file = await this.storage.save(buffer, "application/pdf");
       return await this.db.$transaction(async (tx) => {
         await lock(tx, "invoices", key);
         const fresh = await tx.invoice.findUnique({ where: { id: key } });
@@ -79,6 +83,7 @@ export class InvoiceRenderService {
         return m;
       });
     } catch (e) {
+      if (file) await this.storage.discard(file);
       const current = await this.db.invoice.findUnique({ where: { id: key } });
       if (current)
         await this.db.$transaction((tx) =>

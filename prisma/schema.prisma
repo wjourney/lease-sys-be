@@ -23,6 +23,7 @@ model User {
   role           String
   name           String
   nameEn         String?
+  avatarStorageProvider String @default("LOCAL")
   avatarStorageKey String?
   avatarMimeType   String?
   phone          String?
@@ -350,6 +351,7 @@ model Material {
   description        String? @db.Text
   body               String? @db.Text
   sourceUrl          String? @db.Text
+  storageProvider    String    @default("LOCAL")
   storageKey         String?
   originalName       String? @db.Text
   mimeType           String?
@@ -405,4 +407,20 @@ model SystemSetting {
   value         Json
 
   @@map("system_settings")
+}
+
+// Durable compensation for uploads and replaced avatars. References (including
+// historical/soft-deleted materials) are checked before any physical deletion.
+model StorageCleanup {
+  id              String   @id @default(uuid()) @db.Char(36)
+  storageProvider String
+  storageKey      String
+  deleteAfter     DateTime
+  attempts        Int      @default(0)
+  lastError       String?
+  createdAt       DateTime @default(now())
+
+  @@unique([storageProvider, storageKey])
+  @@index([deleteAfter])
+  @@map("storage_cleanup")
 }

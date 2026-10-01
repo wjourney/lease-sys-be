@@ -11,6 +11,8 @@ node -e 'const url = new URL(process.env.DATABASE_URL); if (url.protocol !== "my
   echo 'Refusing to reset a database outside the dedicated local test schema.' >&2
   exit 1
 }
+export STORAGE_PROVIDER=LOCAL
+export DISABLE_SCHEDULER=true
 export PORT=3002
 export APP_ORIGIN='http://127.0.0.1:5174,http://localhost:5174'
 export JWT_SECRET='lease-test-only-secret-never-use-in-production'

@@ -1,10 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
 import { update } from "../../common/database/record-mutations";
-import { LocalStorageService } from "../../common/storage/local-storage.service";
+import {
+  StoredFile,
+  StorageService,
+} from "../../common/storage/storage.service";
 import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { MaterialsService } from "./materials.service";
@@ -13,7 +14,7 @@ export class MaterialFilesService {
   constructor(
     @Inject(PrismaService) readonly db: PrismaService,
     @Inject(AccessService) readonly access: AccessService,
-    @Inject(LocalStorageService) readonly storage: LocalStorageService,
+    @Inject(StorageService) readonly storage: StorageService,
     @Inject(MaterialsService) readonly materials: MaterialsService,
   ) {}
   async upload(
@@ -49,8 +50,9 @@ export class MaterialFilesService {
     const data = await this.materials.create(a, payload, {
       replacingMaterialGroupId,
     });
+    let stored: StoredFile | undefined;
     try {
-      const stored = await this.storage.save(b);
+      stored = await this.storage.save(b, detected);
       return await this.db.$transaction((tx) =>
         update(
           tx,
@@ -62,6 +64,7 @@ export class MaterialFilesService {
         ),
       );
     } catch (e) {
+      if (stored) await this.storage.discard(stored);
       await this.db.material.update({
         where: { id: data.id },
         data: { deletedAt: new Date() },
@@ -71,14 +74,15 @@ export class MaterialFilesService {
   }
   async download(a: Actor, key: string) {
     const m = await this.access.get(a, "materials", key);
-    if (!m.storageKey || !/^[a-f0-9-]{36}$/.test(m.storageKey))
-      fail("当前资料没有可下载文件");
+    if (!m.storageKey) fail("当前资料没有可下载文件");
     return {
-      buffer: await readFile(resolve(this.storage.root(), m.storageKey)),
+      storageProvider: m.storageProvider,
+      storageKey: m.storageKey,
       name: m.originalName ?? m.title,
       type: m.mimeType ?? "application/octet-stream",
     };
   }
+
   async version(
     a: Actor,
     key: string,
@@ -143,6 +147,7 @@ export class MaterialFilesService {
             ...(!file
               ? {
                   storageKey: old.storageKey,
+                  storageProvider: old.storageProvider,
                   originalName: old.originalName,
                   mimeType: old.mimeType,
                   sizeBytes: old.sizeBytes,
@@ -157,8 +162,13 @@ export class MaterialFilesService {
     } catch (e) {
       await this.db.material.update({
         where: { id: created.id },
-        data: { deletedAt: new Date() },
+        data: { deletedAt: new Date(), storageKey: null },
       });
+      if (file && created.storageKey)
+        await this.storage.discard({
+          storageProvider: created.storageProvider,
+          storageKey: created.storageKey,
+        });
       throw e;
     }
   }

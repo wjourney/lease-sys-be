@@ -1,14 +1,13 @@
+import { sendFile } from "../../common/storage/file-response";
 import { Inject, Injectable } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
-import { readFile, unlink } from "node:fs/promises";
-import { resolve } from "node:path";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
 import { hashPassword } from "../../common/auth/password";
 import { lock, update } from "../../common/database/record-mutations";
 import { ResourceService } from "../../common/resources/resource.service";
-import { LocalStorageService } from "../../common/storage/local-storage.service";
+import { StorageService } from "../../common/storage/storage.service";
 import { demand, fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { UsersSchema } from "./dto/users.schema";
@@ -25,8 +24,8 @@ export class UsersService extends ResourceService {
     db: PrismaService,
     @Inject(AccessService)
     access: AccessService,
-    @Inject(LocalStorageService)
-    private storage: LocalStorageService,
+    @Inject(StorageService)
+    private storage: StorageService,
   ) {
     super(db, access);
   }
@@ -54,42 +53,56 @@ export class UsersService extends ResourceService {
               bytes.subarray(8, 12).toString() === "WEBP"
             ? "image/webp"
             : null;
-    if (!mimeType) fail("头像仅支持 JPG、PNG 或 WebP 图片");
-    const stored = await this.storage.save(bytes);
+    if (!mimeType) return fail("头像仅支持 JPG、PNG 或 WebP 图片");
+    const stored = await this.storage.save(bytes, mimeType);
+    let result: any;
     try {
-      const { row, oldKey } = await this.db.$transaction(async (tx) => {
+      result = await this.db.$transaction(async (tx) => {
         await lock(tx, this.resource, key);
         const current = await this.access.get(a, this.resource, key, tx);
         const row = await update(
           tx,
           this.resource,
           current,
-          { avatarStorageKey: stored.storageKey, avatarMimeType: mimeType },
+          {
+            avatarStorageKey: stored.storageKey,
+            avatarStorageProvider: stored.storageProvider,
+            avatarMimeType: mimeType,
+          },
           a,
           "更新头像",
         );
-        return { row, oldKey: current.avatarStorageKey };
+        if (current.avatarStorageKey) {
+          const old = {
+            storageProvider: current.avatarStorageProvider,
+            storageKey: current.avatarStorageKey,
+          };
+          await tx.storageCleanup.upsert({
+            where: { storageProvider_storageKey: old },
+            create: { ...old, deleteAfter: new Date(Date.now() + 300000) },
+            update: { deleteAfter: new Date(Date.now() + 300000) },
+          });
+        }
+        return row;
       });
-      if (oldKey && /^[a-f0-9-]{36}$/.test(oldKey))
-        await unlink(resolve(this.storage.root(), oldKey)).catch(() => {});
-      return this.enrich(a, row);
     } catch (cause) {
-      await unlink(resolve(this.storage.root(), stored.storageKey)).catch(
-        () => {},
-      );
+      await this.storage.discard(stored);
       throw cause;
     }
+    return this.enrich(a, result);
   }
   async avatar(a: Actor, key: string) {
     const row = await this.access.get(a, this.resource, key);
-    if (!row.avatarStorageKey || !/^[a-f0-9-]{36}$/.test(row.avatarStorageKey))
-      fail("该账号尚未上传头像");
+    if (!row.avatarStorageKey) fail("该账号尚未上传头像");
     return {
-      buffer: await readFile(
-        resolve(this.storage.root(), row.avatarStorageKey),
-      ),
+      storageProvider: row.avatarStorageProvider,
+      storageKey: row.avatarStorageKey,
       type: row.avatarMimeType || "image/png",
+      name: "avatar",
     };
+  }
+  async sendAvatar(a: Actor, key: string, req: any, res: any) {
+    await sendFile(req, res, this.storage, await this.avatar(a, key));
   }
   async createMember(a: Actor, body: any) {
     const generated = !body?.password;
