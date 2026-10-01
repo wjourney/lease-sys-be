@@ -36,7 +36,6 @@ export class UsersService extends ResourceService {
   private assertCanDisable(a: Actor, row: any) {
     demand(a.role === "SUPER_ADMIN", "只有超级管理员可以停用账号");
     if (row.id === a.id) fail("不能停用自己的账号");
-    demand(row.role !== "SUPER_ADMIN", "不能停用超级管理员账号");
   }
   async uploadAvatar(a: Actor, key: string, file?: Express.Multer.File) {
     if (key !== a.id) this.access.allow(a, this.resource, true);
@@ -193,10 +192,6 @@ export class UsersService extends ResourceService {
       ...row,
       ...data,
     };
-    demand(
-      combined.role !== "SUPER_ADMIN" || combined.status !== "DISABLED",
-      "不能停用超级管理员账号",
-    );
     if (row && row.status !== "DISABLED" && data.status === "DISABLED")
       this.assertCanDisable(a, row);
     if (a.role === "SALES_COMPANY_ADMIN") {
@@ -245,6 +240,5 @@ export class UsersService extends ResourceService {
   }
   protected async beforeRemove(a: Actor, tx: any, row: any) {
     if (row.id === a.id) fail("不能删除自己的账号");
-    if (row.role === "SUPER_ADMIN") fail("不能删除超级管理员账号");
   }
 }

@@ -257,43 +257,49 @@ test("full workflow and authorization invariants", async (t) => {
         },
         201,
       );
-      await admin.call(
+      const disabledAdmin = await admin.call(
         "POST",
         `/users/${secondAdmin.id}/disable`,
-        { reason: "管理员账号受保护" },
-        403,
+        { reason: "测试停用其他管理员" },
+        201,
       );
-      await admin.call(
+      assert.equal(disabledAdmin.status, "DISABLED");
+      const enabledAdmin = await admin.call(
         "PATCH",
         `/users/${secondAdmin.id}`,
         {
-          revision: secondAdmin.revision,
-          status: "DISABLED",
-          reason: "管理员账号受保护",
+          revision: disabledAdmin.revision,
+          status: "ACTIVE",
+          reason: "测试重新启用其他管理员",
         },
-        403,
       );
-      assert.equal(
-        (await admin.call("GET", `/users/${secondAdmin.id}`)).status,
-        "ACTIVE",
+      const patchedAdmin = await admin.call(
+        "PATCH",
+        `/users/${secondAdmin.id}`,
+        {
+          revision: enabledAdmin.revision,
+          status: "DISABLED",
+          reason: "测试通过编辑停用其他管理员",
+        },
       );
+      assert.equal(patchedAdmin.status, "DISABLED");
       await admin.call(
         "DELETE",
         `/users/${secondAdmin.id}`,
-        { reason: "管理员账号受保护" },
+        { reason: "测试删除其他管理员" },
+      );
+      await admin.call("GET", `/users/${secondAdmin.id}`, undefined, 404);
+      await admin.call(
+        "POST",
+        `/users/${a.id}/disable`,
+        { reason: "不能停用自己" },
         400,
       );
-      const activeMember = await admin.call("GET", `/users/${created.id}`);
       await admin.call(
-        "PATCH",
-        `/users/${created.id}`,
-        {
-          revision: activeMember.revision,
-          role: "SUPER_ADMIN",
-          status: "DISABLED",
-          reason: "不能同时改角色与停用",
-        },
-        403,
+        "DELETE",
+        `/users/${a.id}`,
+        { reason: "不能删除自己" },
+        400,
       );
       const disabled = await admin.call(
         "POST",
