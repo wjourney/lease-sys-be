@@ -1,5 +1,6 @@
 import { sendFile } from "../../common/storage/file-response";
-import { Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
@@ -105,9 +106,28 @@ export class UsersService extends ResourceService {
     await sendFile(req, res, this.storage, await this.avatar(a, key));
   }
   async createMember(a: Actor, body: any) {
+    const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
+    if (!/^\d{8,20}$/.test(phone)) fail("请输入 8 至 20 位数字手机号");
+    if (body?.username !== undefined && body.username !== phone)
+      fail("登录账号必须与手机号一致");
     const generated = !body?.password;
     const initialPassword = generated ? this.initialPassword() : body.password;
-    const row = await super.create(a, { ...body, password: initialPassword });
+    let row: any;
+    try {
+      row = await super.create(a, {
+        ...body,
+        username: phone,
+        phone,
+        password: initialPassword,
+      });
+    } catch (cause) {
+      if (
+        cause instanceof Prisma.PrismaClientKnownRequestError &&
+        cause.code === "P2002"
+      )
+        throw new ConflictException("该手机号已被用作登录账号");
+      throw cause;
+    }
     return {
       ...(await this.enrich(a, row)),
       ...(generated ? { initialPassword } : {}),
@@ -160,6 +180,15 @@ export class UsersService extends ResourceService {
     return this.enrich(a, row);
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
+    if (row && data.username !== undefined && data.username !== row.username)
+      fail("登录账号不能在资料编辑中修改");
+    if (
+      row &&
+      row.username === row.phone &&
+      data.phone !== undefined &&
+      data.phone !== row.phone
+    )
+      fail("登录手机号暂不支持在资料编辑中修改");
     const combined = {
       ...row,
       ...data,

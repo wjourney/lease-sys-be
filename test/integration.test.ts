@@ -1,6 +1,6 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 const base = process.env.TEST_API_URL || "http://127.0.0.1:3002/api/v1";
 if (!base.includes(":3002/"))
   throw new Error(
@@ -89,7 +89,6 @@ test("full workflow and authorization invariants", async (t) => {
       "POST",
       "/users",
       {
-        username: "escalate",
         password: "Password123!",
         name: "Forbidden",
         phone: "13800000000",
@@ -128,14 +127,13 @@ test("full workflow and authorization invariants", async (t) => {
   await t.test(
     "member account creation, password reset and disable",
     async () => {
-      const username = `member_${randomUUID().slice(0, 8)}`;
+      const username = `13${randomInt(100_000_000, 1_000_000_000)}`;
       const created = await admin.call(
         "POST",
         "/users",
         {
-          username,
           name: "测试成员",
-          phone: "13800000000",
+          phone: username,
           role: "OPERATIONS",
           status: "ACTIVE",
         },
@@ -143,8 +141,38 @@ test("full workflow and authorization invariants", async (t) => {
       );
       assert.equal(created.username, username);
       assert.ok(created.initialPassword?.length >= 10);
+      await admin.call(
+        "POST",
+        "/users",
+        { name: "重复手机号", phone: username, role: "OPERATIONS" },
+        409,
+      );
+      await admin.call(
+        "POST",
+        "/users",
+        {
+          username: "different",
+          name: "登录账号不一致",
+          phone: "13800001111",
+          role: "OPERATIONS",
+        },
+        400,
+      );
+      const createdDetail = await admin.call("GET", `/users/${created.id}`);
+      await admin.call(
+        "PATCH",
+        `/users/${created.id}`,
+        { revision: createdDetail.revision, phone: "13800001111" },
+        400,
+      );
       const member = new Client();
       await member.login(username, created.initialPassword);
+      await member.call(
+        "PATCH",
+        "/auth/me",
+        { name: created.name, nameEn: "", phone: "13800001111", email: "" },
+        400,
+      );
       const avatarData = new FormData();
       avatarData.append(
         "file",
@@ -222,9 +250,8 @@ test("full workflow and authorization invariants", async (t) => {
         "POST",
         "/users",
         {
-          username: `admin_${randomUUID().slice(0, 8)}`,
           name: "第二位管理员",
-          phone: "13800009999",
+          phone: `13${randomInt(100_000_000, 1_000_000_000)}`,
           role: "SUPER_ADMIN",
           status: "ACTIVE",
         },

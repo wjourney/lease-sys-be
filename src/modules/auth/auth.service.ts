@@ -11,6 +11,7 @@ import { hashPassword, verifyPassword } from "../../common/auth/password";
 import { accountExpired } from "../../common/auth/account-expiry";
 import { capabilities } from "../../common/auth/permissions";
 import { lock, update } from "../../common/database/record-mutations";
+import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { secret } from "./jwt.config";
 const attempts = new Map<
@@ -132,6 +133,8 @@ export class AuthService {
       const current = await tx.user.findUnique({ where: { id: actor.id } });
       if (!current || current.deletedAt || current.status !== "ACTIVE")
         throw new UnauthorizedException("账号不可用");
+      if (current.username === current.phone && data.phone !== current.phone)
+        fail("登录手机号暂不支持在个人资料中修改");
       return update(tx, "users", current, data, actor, "个人中心修改资料");
     });
     return this.profile(updated);
