@@ -31,8 +31,8 @@ gzip -dc | docker load >/dev/null
 docker image inspect "$image" >/dev/null
 
 cd "$repo"
-git fetch --quiet origin master
-if [[ "$(git rev-parse origin/master)" != "$revision" ]]; then
+git fetch --quiet origin '+refs/heads/master:refs/remotes/origin/master'
+if [[ "$(git rev-parse --verify refs/remotes/origin/master)" != "$revision" ]]; then
   echo "Skipping obsolete deployment: $service $revision" >&2
   exit 0
 fi
