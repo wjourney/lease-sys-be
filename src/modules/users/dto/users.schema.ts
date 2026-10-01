@@ -13,6 +13,6 @@ export const UsersSchema = z.object({
   branchCode: opt,
   positionCode: opt,
   status: z.enum(["ACTIVE", "DISABLED"]).optional(),
-  expiresAt: date.optional(),
+  expiresAt: date.nullable().optional(),
 });
 export type UsersInput = z.input<typeof UsersSchema>;

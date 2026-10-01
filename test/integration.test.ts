@@ -165,6 +165,15 @@ test("full workflow and authorization invariants", async (t) => {
         { revision: createdDetail.revision, phone: "13800001111" },
         400,
       );
+      const expiring = await admin.call("PATCH", `/users/${created.id}`, {
+        revision: createdDetail.revision,
+        expiresAt: "2027-10-01",
+      });
+      const ongoing = await admin.call("PATCH", `/users/${created.id}`, {
+        revision: expiring.revision,
+        expiresAt: null,
+      });
+      assert.equal(ongoing.expiresAt, null);
       const member = new Client();
       await member.login(username, created.initialPassword);
       await member.call(
