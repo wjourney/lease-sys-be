@@ -31,6 +31,7 @@ export const OrdersSchema = z.object({
       rentReceived: money,
       depositReceived: money,
       dueOn: z.iso.date().optional(),
+      receivedOn: z.iso.date().optional(),
     })
     .strict()
     .optional(),
