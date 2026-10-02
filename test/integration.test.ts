@@ -1001,6 +1001,30 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
     assert.equal(detail.initialPayment.rentReceived, "5800");
     assert.equal(detail.status, "PENDING");
+    const edited = await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision,
+      reason: "核对租客资料",
+      tenantType: "PERSON",
+      tenantName: "新租客",
+      tenantPhone: "12345678",
+      tenantEmail: "new-tenant@example.com",
+      registrationNoType: null,
+      tenantRegistrationNo: "",
+      tenantContactName: "",
+      depositPlan: null,
+      moveInOn: null,
+    });
+    assert.equal(edited.tenantType, "PERSON");
+    assert.equal(edited.tenantName, "新租客");
+    assert.equal(edited.registrationNoType, null);
+    assert.equal(edited.tenantRegistrationNo, "");
+    assert.equal(edited.depositPlan, null);
+    assert.equal(edited.moveInOn, null);
+    assert.deepEqual(edited.tenantSnapshot, {
+      name: "新租客",
+      phone: "12345678",
+      email: "new-tenant@example.com",
+    });
   });
   await t.test(
     "material versions keep one current record and retain private ownership",

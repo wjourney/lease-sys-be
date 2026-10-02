@@ -191,6 +191,11 @@ export class OrderLifecycleService {
       .passthrough()
       .parse(body);
     const d = OrdersSchema.omit({ unitId: true, salesUserId: true })
+      .extend({
+        registrationNoType: OrdersSchema.shape.registrationNoType.nullable(),
+        depositPlan: OrdersSchema.shape.depositPlan.nullable(),
+        moveInOn: OrdersSchema.shape.moveInOn.nullable(),
+      })
       .partial()
       .strict()
       .parse(rest);
@@ -209,7 +214,29 @@ export class OrderLifecycleService {
       if (next.startsOn > next.endsOn) fail("租期无效");
       validateOrderDetails(next);
       await this.checkOccupancy(tx, o.unitId, next.startsOn, next.endsOn, o.id);
-      return update(tx, "orders", o, d, a, reason);
+      const tenantChanged =
+        d.tenantName !== undefined ||
+        d.tenantPhone !== undefined ||
+        d.tenantEmail !== undefined;
+      return update(
+        tx,
+        "orders",
+        o,
+        {
+          ...d,
+          ...(tenantChanged
+            ? {
+                tenantSnapshot: {
+                  name: next.tenantName,
+                  phone: next.tenantPhone,
+                  email: next.tenantEmail,
+                },
+              }
+            : {}),
+        },
+        a,
+        reason,
+      );
     });
   }
   async terminate(a: Actor, key: string, body: any) {
