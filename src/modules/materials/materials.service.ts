@@ -5,6 +5,7 @@ import { ownerMap } from "../../common/resources/resource-map";
 import { ResourceService } from "../../common/resources/resource.service";
 import { demand, fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
+import { StorageService } from "../../common/storage/storage.service";
 import { MaterialsSchema } from "./dto/materials.schema";
 import { normalizeUploadName } from "./file-name";
 @Injectable()
@@ -16,6 +17,8 @@ export class MaterialsService extends ResourceService {
     db: PrismaService,
     @Inject(AccessService)
     access: AccessService,
+    @Inject(StorageService)
+    private readonly storage: StorageService,
   ) {
     super(db, access);
   }
@@ -23,6 +26,12 @@ export class MaterialsService extends ResourceService {
     const result = await super.enrich(a, row);
     if (result.originalName)
       result.originalName = normalizeUploadName(result.originalName);
+    result.previewUrl = row.storageKey
+      ? await this.storage.previewUrl(
+          { storageProvider: row.storageProvider, storageKey: row.storageKey },
+          `/api/v1/materials/${row.id}/download`,
+        )
+      : null;
     return result;
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {

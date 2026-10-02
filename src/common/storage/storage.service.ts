@@ -35,6 +35,7 @@ export const checksum = (bytes: Buffer) =>
 export class StorageService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(StorageService.name);
   private client?: OSS;
+  private publicClient?: OSS;
   private timer?: NodeJS.Timeout;
   private cleaning = false;
   readonly provider = process.env.STORAGE_PROVIDER || "LOCAL";
@@ -80,6 +81,51 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       timeout: 60000,
     });
     return this.client;
+  }
+  private publicOss() {
+    if (this.publicClient) return this.publicClient;
+    const internalEndpoint = new URL(process.env.OSS_ENDPOINT || "");
+    const endpoint = new URL(
+      process.env.OSS_PUBLIC_ENDPOINT ||
+        internalEndpoint.href.replace(
+          /-internal(?=\.aliyuncs\.com(?:\/|$))/,
+          "",
+        ),
+    );
+    if (
+      endpoint.protocol !== "https:" ||
+      !/^oss-[a-z0-9-]+\.aliyuncs\.com$/.test(endpoint.hostname)
+    )
+      throw new Error("OSS_PUBLIC_ENDPOINT must be a public HTTPS OSS endpoint");
+    this.publicClient = new OSS({
+      endpoint: endpoint.href,
+      bucket: process.env.OSS_BUCKET!,
+      region: process.env.OSS_REGION || "oss-cn-shanghai",
+      accessKeyId: process.env.OSS_ACCESS_KEY_ID!,
+      accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET!,
+      ...(process.env.OSS_SECURITY_TOKEN
+        ? { stsToken: process.env.OSS_SECURITY_TOKEN }
+        : {}),
+      secure: true,
+    });
+    return this.publicClient;
+  }
+  async previewUrl(
+    ref: StoredReference,
+    fallbackUrl: string,
+  ): Promise<string> {
+    this.validate(ref);
+    if (ref.storageProvider === "LOCAL") return fallbackUrl;
+    try {
+      return await this.publicOss().signatureUrlV4(
+        "GET",
+        3600,
+        { headers: {} },
+        ref.storageKey,
+      );
+    } catch (error) {
+      return this.failure(error);
+    }
   }
   private validate(ref: StoredReference) {
     const valid =

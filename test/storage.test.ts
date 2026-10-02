@@ -150,6 +150,60 @@ test("OSS uses private immutable objects, streams Range and never falls back to 
   assert.deepEqual(calls[1], ["delete", file.storageKey]);
 });
 
+test("preview URLs use V4 signatures on the public OSS endpoint while local files keep their API URL", async () => {
+  const original = {
+    provider: process.env.STORAGE_PROVIDER,
+    endpoint: process.env.OSS_ENDPOINT,
+    bucket: process.env.OSS_BUCKET,
+    keyId: process.env.OSS_ACCESS_KEY_ID,
+    secret: process.env.OSS_ACCESS_KEY_SECRET,
+    publicEndpoint: process.env.OSS_PUBLIC_ENDPOINT,
+  };
+  const restore = (key: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  };
+  try {
+    process.env.STORAGE_PROVIDER = "LOCAL";
+    process.env.OSS_ENDPOINT =
+      "https://oss-cn-shanghai-internal.aliyuncs.com";
+    process.env.OSS_BUCKET = "example-private-bucket";
+    process.env.OSS_ACCESS_KEY_ID = "test-key";
+    process.env.OSS_ACCESS_KEY_SECRET = "test-secret";
+    delete process.env.OSS_PUBLIC_ENDPOINT;
+    const storage = new StorageService(database() as any);
+    const fallback = "/api/v1/materials/123/download";
+    const localKey = "00000000-0000-0000-0000-000000000001";
+    assert.equal(
+      await storage.previewUrl(
+        { storageProvider: "LOCAL", storageKey: localKey },
+        fallback,
+      ),
+      fallback,
+    );
+    const url = new URL(
+      await storage.previewUrl(
+        {
+          storageProvider: "OSS",
+          storageKey: "lease-sys/dev/" + localKey,
+        },
+        fallback,
+      ),
+    );
+    assert.equal(url.hostname, "example-private-bucket.oss-cn-shanghai.aliyuncs.com");
+    assert.equal(url.searchParams.get("x-oss-signature-version"), "OSS4-HMAC-SHA256");
+    assert.ok(url.searchParams.has("x-oss-signature"));
+    assert.ok(!url.hostname.includes("-internal"));
+  } finally {
+    restore("STORAGE_PROVIDER", original.provider);
+    restore("OSS_ENDPOINT", original.endpoint);
+    restore("OSS_BUCKET", original.bucket);
+    restore("OSS_ACCESS_KEY_ID", original.keyId);
+    restore("OSS_ACCESS_KEY_SECRET", original.secret);
+    restore("OSS_PUBLIC_ENDPOINT", original.publicEndpoint);
+  }
+});
+
 test("failed writes keep a durable cleanup candidate and deletion failures are retried", async () => {
   process.env.STORAGE_PROVIDER = "LOCAL";
   const db = database();

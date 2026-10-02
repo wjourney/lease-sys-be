@@ -7,6 +7,7 @@ import { number } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
 import { UnitsSchema } from "./dto/units.schema";
 import { normalizeUploadName } from "../materials/file-name";
+import { StorageService } from "../../common/storage/storage.service";
 @Injectable()
 export class UnitsService extends ResourceService {
   readonly resource = "units";
@@ -17,6 +18,8 @@ export class UnitsService extends ResourceService {
     db: PrismaService,
     @Inject(AccessService)
     access: AccessService,
+    @Inject(StorageService)
+    private readonly storage: StorageService,
   ) {
     super(db, access);
   }
@@ -86,10 +89,16 @@ export class UnitsService extends ResourceService {
         ...(!internal(a) ? { visibility: "SHARED" as const } : {}),
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: { id: true },
+      select: { id: true, storageProvider: true, storageKey: true },
     });
-    x.coverUrl = firstPhoto
-      ? `/api/v1/materials/${firstPhoto.id}/download`
+    x.coverUrl = firstPhoto?.storageKey
+      ? await this.storage.previewUrl(
+          {
+            storageProvider: firstPhoto.storageProvider,
+            storageKey: firstPhoto.storageKey,
+          },
+          `/api/v1/materials/${firstPhoto.id}/download`,
+        )
       : null;
     return x;
   }
@@ -106,15 +115,26 @@ export class UnitsService extends ResourceService {
     });
     return {
       ...unit,
-      materials: materials.map(({ operationLogs, ...material }) => ({
-        ...material,
-        originalName: material.originalName
-          ? normalizeUploadName(material.originalName)
-          : null,
-        downloadUrl: material.storageKey
-          ? `/api/v1/materials/${material.id}/download`
-          : null,
-      })),
+      materials: await Promise.all(
+        materials.map(async ({ operationLogs, ...material }) => ({
+          ...material,
+          originalName: material.originalName
+            ? normalizeUploadName(material.originalName)
+            : null,
+          downloadUrl: material.storageKey
+            ? `/api/v1/materials/${material.id}/download`
+            : null,
+          previewUrl: material.storageKey
+            ? await this.storage.previewUrl(
+                {
+                  storageProvider: material.storageProvider,
+                  storageKey: material.storageKey,
+                },
+                `/api/v1/materials/${material.id}/download`,
+              )
+            : null,
+        })),
+      ),
     };
   }
 }

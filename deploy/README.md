@@ -56,6 +56,7 @@ Append the following runtime-only configuration to `/srv/lease-sys/config/api.en
 STORAGE_PROVIDER=OSS
 OSS_REGION=oss-cn-shanghai
 OSS_ENDPOINT=https://oss-cn-shanghai-internal.aliyuncs.com
+OSS_PUBLIC_ENDPOINT=https://oss-cn-shanghai.aliyuncs.com
 OSS_BUCKET=hkrentt
 OSS_PREFIX=lease-sys/prod/
 OSS_ACCESS_KEY_ID=<dedicated RAM access key ID>
@@ -72,14 +73,16 @@ The runtime supports an optional OSS_SECURITY_TOKEN for explicitly supplied STS
 credentials; it does not auto-renew STS, so use a managed role credential provider
 before relying on expiring credentials in a long-running deployment.
 
-Existing API paths remain authenticated. The backend streams file bytes from OSS,
-including Range/206/416 and HEAD for video seeking. Private files do not have a
-public URL. Default OSS browser-preview restrictions and cross-origin rules do not
-apply to same-origin API streaming. Images, videos and PDF files retain the current
+Existing API paths remain authenticated. List and detail responses include one-hour
+signed public OSS preview URLs for authorized materials and cover images. The
+bucket and objects remain private; clients cannot use an unsigned permanent URL.
+The public endpoint is derived from OSS_ENDPOINT when OSS_PUBLIC_ENDPOINT is
+omitted. Download endpoints still stream file bytes through the API, including
+Range/206/416 and HEAD. Images, videos and PDF files retain the current
 MIME allowlist; materials are limited to 30 MiB, avatars to 2 MiB. Configure host
 Nginx `client_max_body_size 32m` and Caddy `max_size 32MiB` to allow multipart
-metadata overhead while the API enforces exact per-file limits. File transfer still
-uses the application server's bandwidth; browser direct upload is a later phase.
+metadata overhead while the API enforces exact per-file limits. Browser previews
+use OSS bandwidth; downloads and uploads still use the application server.
 
 The additive migration records `storageProvider` on materials and
 `avatarStorageProvider` on users, defaulting legacy records to LOCAL. Reads follow

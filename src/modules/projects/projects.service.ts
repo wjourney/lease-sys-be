@@ -8,6 +8,7 @@ import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
 import { ProjectsSchema } from "./dto/projects.schema";
 import { normalizeUploadName } from "../materials/file-name";
+import { StorageService } from "../../common/storage/storage.service";
 @Injectable()
 export class ProjectsService extends ResourceService {
   readonly resource = "projects";
@@ -19,6 +20,8 @@ export class ProjectsService extends ResourceService {
     db: PrismaService,
     @Inject(AccessService)
     access: AccessService,
+    @Inject(StorageService)
+    private readonly storage: StorageService,
   ) {
     super(db, access);
   }
@@ -115,6 +118,7 @@ export class ProjectsService extends ResourceService {
     const imageFilter = {
       projectId: row.id,
       mimeType: { startsWith: "image/" },
+      storageKey: { not: null },
       deletedAt: null,
       isCurrent: true,
       ...(!internal(a) ? { visibility: "SHARED" } : {}),
@@ -128,7 +132,12 @@ export class ProjectsService extends ResourceService {
         where: { ...imageFilter, category: "LOGO" },
         orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
       }));
-    x.coverUrl = image ? "/api/v1/materials/" + image.id + "/download" : null;
+    x.coverUrl = image
+      ? await this.storage.previewUrl(
+          { storageProvider: image.storageProvider, storageKey: image.storageKey! },
+          `/api/v1/materials/${image.id}/download`,
+        )
+      : null;
     return x;
   }
   async detail(a: Actor, key: string) {
@@ -144,15 +153,26 @@ export class ProjectsService extends ResourceService {
     });
     return {
       ...project,
-      materials: materials.map(({ operationLogs, ...material }) => ({
-        ...material,
-        originalName: material.originalName
-          ? normalizeUploadName(material.originalName)
-          : null,
-        downloadUrl: material.storageKey
-          ? `/api/v1/materials/${material.id}/download`
-          : null,
-      })),
+      materials: await Promise.all(
+        materials.map(async ({ operationLogs, ...material }) => ({
+          ...material,
+          originalName: material.originalName
+            ? normalizeUploadName(material.originalName)
+            : null,
+          downloadUrl: material.storageKey
+            ? `/api/v1/materials/${material.id}/download`
+            : null,
+          previewUrl: material.storageKey
+            ? await this.storage.previewUrl(
+                {
+                  storageProvider: material.storageProvider,
+                  storageKey: material.storageKey,
+                },
+                `/api/v1/materials/${material.id}/download`,
+              )
+            : null,
+        })),
+      ),
     };
   }
 }
