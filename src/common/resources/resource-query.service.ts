@@ -61,7 +61,7 @@ export abstract class ResourceQueryService {
     if (q.q)
       and.push({
         OR: search[r].map((k) => ({
-          [k]: { contains: String(q.q).slice(0, 100), mode: "insensitive" },
+          [k]: { contains: String(q.q).slice(0, 100) },
         })),
       });
     if (

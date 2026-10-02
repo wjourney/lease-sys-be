@@ -326,6 +326,16 @@ test("full workflow and authorization invariants", async (t) => {
     const hidden = rows.find((x) => x.projectName === "海棠里项目");
     assert(hidden);
     assert.equal(hidden.referenceRent, undefined);
+    const searched = await admin.call(
+      "GET",
+      `/units?projectId=${hidden.projectId}&page=1&pageSize=9&q=88&status=`,
+    );
+    assert(Array.isArray(searched.items));
+    const caseInsensitive = await admin.call(
+      "GET",
+      `/units?projectId=${hidden.projectId}&q=a`,
+    );
+    assert.equal(caseInsensitive.total, 4);
     const projectDetail = await sales.call("GET", "/projects/" + hidden.projectId);
     assert.deepEqual(projectDetail.operations, []);
     const orderDetail = await sales.call("GET", "/orders/" + order.id);
