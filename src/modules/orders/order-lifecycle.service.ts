@@ -10,6 +10,28 @@ import { date } from "../../common/validation/fields";
 import { PrismaService } from "../../database/prisma.service";
 import { RentBillingService } from "../incomes/rent-billing.service";
 import { OrdersSchema } from "./dto/orders.schema";
+
+function validateOrderDetails(d: any) {
+  if (
+    d.registrationNoType &&
+    !(d.tenantType === "PERSON"
+      ? ["HKID", "PASSPORT"].includes(d.registrationNoType)
+      : ["BR", "CR"].includes(d.registrationNoType))
+  )
+    fail("注册号码类型与租客类型不一致");
+  if (d.initialPayment && Object.keys(d.initialPayment).length) {
+    const p = d.initialPayment;
+    if (p.paid !== (p.rentPaid || p.depositPaid))
+      fail("首期款状态与租金、押金付款状态不一致");
+    if (
+      (p.rentPaid && number(p.rentReceived).lte(0)) ||
+      (p.depositPaid && number(p.depositReceived).lte(0)) ||
+      (!p.rentPaid && number(p.rentReceived).gt(0)) ||
+      (!p.depositPaid && number(p.depositReceived).gt(0))
+    )
+      fail("首期实收金额与付款状态不一致");
+  }
+}
 @Injectable()
 export class OrderLifecycleService {
   constructor(
@@ -22,6 +44,7 @@ export class OrderLifecycleService {
     const d = OrdersSchema.strict().parse(body);
     if (d.startsOn > d.endsOn) fail("租期开始日期不能晚于结束日期");
     if (number(d.monthlyRent).lte(0)) fail("租金必须大于零");
+    validateOrderDetails(d);
     return this.db.$transaction(
       async (tx) => {
         await lock(tx, "units", d.unitId);
@@ -184,6 +207,7 @@ export class OrderLifecycleService {
         fail("已登记付款，请由授权运营修改");
       const next = { ...o, ...d };
       if (next.startsOn > next.endsOn) fail("租期无效");
+      validateOrderDetails(next);
       await this.checkOccupancy(tx, o.unitId, next.startsOn, next.endsOn, o.id);
       return update(tx, "orders", o, d, a, reason);
     });

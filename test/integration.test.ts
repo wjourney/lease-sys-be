@@ -947,6 +947,61 @@ test("full workflow and authorization invariants", async (t) => {
       reason: "价格校验测试完成",
     });
   });
+  await t.test("new order keeps tenant and initial-payment details", async () => {
+    const existing = await admin.call("GET", `/units/${order.unitId}`);
+    const unit = await admin.call(
+      "POST",
+      "/units",
+      {
+        projectId: existing.projectId,
+        unitNo: `新订单-${randomUUID().slice(0, 8)}`,
+        unitTypeCode: existing.unitTypeCode,
+        area: "38",
+        referenceRent: "5800",
+        minRent: "5000",
+        maxRent: "6500",
+        minLeaseMonths: 12,
+      },
+      201,
+    );
+    const body = {
+      unitId: unit.id,
+      salesUserId: order.salesUserId,
+      tenantType: "COMPANY",
+      tenantName: "示例租客公司",
+      registrationNoType: "BR",
+      tenantRegistrationNo: "BR-12345",
+      startsOn: "2026-11-01",
+      endsOn: "2027-10-31",
+      monthlyRent: "5800",
+      depositAmount: "11600",
+      depositPlan: "TWO_ONE",
+      moveInOn: "2026-11-01",
+      initialPayment: {
+        paid: true,
+        rentPaid: true,
+        depositPaid: false,
+        rentReceived: "5800",
+        depositReceived: "0",
+        dueOn: "2026-10-28",
+      },
+    };
+    await admin.call("POST", "/orders", {
+      ...body,
+      initialPayment: { ...body.initialPayment, paid: false },
+    }, 400);
+    await admin.call("POST", "/orders", {
+      ...body,
+      registrationNoType: "HKID",
+    }, 400);
+    const created = await admin.call("POST", "/orders", body, 201);
+    const detail = await admin.call("GET", `/orders/${created.id}`);
+    assert.equal(detail.registrationNoType, "BR");
+    assert.equal(detail.depositPlan, "TWO_ONE");
+    assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
+    assert.equal(detail.initialPayment.rentReceived, "5800");
+    assert.equal(detail.status, "PENDING");
+  });
   await t.test(
     "material versions keep one current record and retain private ownership",
     async () => {

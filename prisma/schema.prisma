@@ -148,6 +148,7 @@ model Order {
   salesUserId               String    @db.Char(36)
   tenantType                String    @default("PERSON")
   tenantName                String
+  registrationNoType        String?
   tenantRegistrationNo      String?
   tenantContactName         String?
   tenantPhone               String?
@@ -156,6 +157,9 @@ model Order {
   endsOn                    DateTime  @db.Date
   monthlyRent               Decimal   @db.Decimal(18, 2)
   depositAmount             Decimal   @db.Decimal(18, 2)
+  depositPlan               String?
+  moveInOn                  DateTime? @db.Date
+  initialPayment            Json      @default("{}")
   currency                  String    @default("HKD")
   paymentIntervalMonths     Int       @default(1)
   rentDueDay                Int       @default(1)
