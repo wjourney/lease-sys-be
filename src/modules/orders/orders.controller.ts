@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Inject,
+  Logger,
   Param,
   Patch,
   Post,
@@ -12,6 +13,7 @@ import {
   Res,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
+import { sendFile } from "../../common/storage/file-response";
 import { ContractsService } from "./contracts.service";
 import { DepositSettlementService } from "./deposit-settlement.service";
 import { OrderLifecycleService } from "./order-lifecycle.service";
@@ -19,6 +21,7 @@ import { OrdersService } from "./orders.service";
 @ApiTags("orders")
 @Controller("orders")
 export class OrdersController {
+  private readonly logger = new Logger(OrdersController.name);
   constructor(
     @Inject(OrdersService) private service: OrdersService,
     @Inject(OrderLifecycleService) private lifecycle: OrderLifecycleService,
@@ -57,6 +60,21 @@ export class OrdersController {
   ) {
     return this.contracts.contract(r.actor, key, d.templateMaterialId);
   }
+  @Post(":id/contract/ensure") async ensureContract(
+    @Req() r: any,
+    @Param("id") key: string,
+  ) {
+    const contract = await this.contracts.ensure(r.actor, key);
+    return { id: contract.id };
+  }
+  @Get(":id/contract/download") async downloadContract(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Res() res: any,
+  ) {
+    const file = await this.contracts.download(r.actor, key);
+    await sendFile(r, res, this.contracts.storage, file, "attachment");
+  }
   @Get() list(@Req() r: any, @Query() q: any) {
     return this.service.list(r.actor, q);
   }
@@ -72,10 +90,17 @@ export class OrdersController {
     return this.service.detail(r.actor, id);
   }
   @Post() async create(@Req() r: any, @Body() body: any) {
-    return this.service.enrich(
-      r.actor,
-      await this.service.create(r.actor, body),
-    );
+    const created = await this.service.create(r.actor, body);
+    try {
+      await this.contracts.ensure(r.actor, created.id);
+    } catch (error) {
+      this.logger.warn(`Order ${created.id} was created without a contract`, error);
+    }
+    const result = await this.service.detail(r.actor, created.id);
+    return {
+      ...result,
+      contractGenerationPending: !result.currentContractMaterialId,
+    };
   }
   @Patch(":id") async edit(
     @Req() r: any,

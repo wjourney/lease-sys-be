@@ -995,6 +995,23 @@ test("full workflow and authorization invariants", async (t) => {
       registrationNoType: "HKID",
     }, 400);
     const created = await admin.call("POST", "/orders", body, 201);
+    assert.ok(created.currentContractMaterialId);
+    assert.equal(created.contractGenerationPending, false);
+    const ensured = await sales.call(
+      "POST",
+      `/orders/${created.id}/contract/ensure`,
+      undefined,
+      201,
+    );
+    assert.equal(ensured.id, created.currentContractMaterialId);
+    const contract = await fetch(
+      base + `/orders/${created.id}/contract/download`,
+      { headers: { Cookie: sales.cookies } },
+    );
+    assert.equal(contract.status, 200);
+    assert.match(contract.headers.get("content-disposition") ?? "", /^attachment;/);
+    assert.equal(Buffer.from(await contract.arrayBuffer()).subarray(0, 4).toString(), "%PDF");
+    await other.call("POST", `/orders/${created.id}/contract/ensure`, undefined, 404);
     const detail = await admin.call("GET", `/orders/${created.id}`);
     assert.equal(detail.registrationNoType, "BR");
     assert.equal(detail.depositPlan, "TWO_ONE");
@@ -1025,6 +1042,15 @@ test("full workflow and authorization invariants", async (t) => {
       phone: "12345678",
       email: "new-tenant@example.com",
     });
+    const updatedContract = await sales.call(
+      "POST",
+      `/orders/${created.id}/contract/ensure`,
+      undefined,
+      201,
+    );
+    assert.notEqual(updatedContract.id, created.currentContractMaterialId);
+    const refreshed = await admin.call("GET", `/orders/${created.id}`);
+    assert.equal(refreshed.currentContractMaterialId, updatedContract.id);
   });
   await t.test(
     "material versions keep one current record and retain private ownership",
