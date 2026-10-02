@@ -326,6 +326,16 @@ test("full workflow and authorization invariants", async (t) => {
     const hidden = rows.find((x) => x.projectName === "海棠里项目");
     assert(hidden);
     assert.equal(hidden.referenceRent, undefined);
+    const projectDetail = await sales.call("GET", "/projects/" + hidden.projectId);
+    assert.deepEqual(projectDetail.operations, []);
+    const orderDetail = await sales.call("GET", "/orders/" + order.id);
+    assert(
+      orderDetail.operations.every(
+        (entry: any) =>
+          !("unitSnapshot" in (entry.changes || {})) &&
+          !("salesSnapshot" in (entry.changes || {})),
+      ),
+    );
     const token = sales.csrf;
     sales.csrf = "invalid";
     await sales.call("POST", "/incomes/" + root.id + "/receipts", {}, 403);
@@ -675,6 +685,8 @@ test("full workflow and authorization invariants", async (t) => {
       );
       assert.equal(history.length, 2);
       assert.equal(history[1].changes.name.after, revised.name);
+      const detail = await admin.call("GET", "/projects/" + p.id);
+      assert.deepEqual(detail.operations, history);
       await admin.call("DELETE", "/projects/" + p.id, { reason: "测试完成" });
       await admin.call("GET", "/projects/" + p.id, undefined, 404);
     },

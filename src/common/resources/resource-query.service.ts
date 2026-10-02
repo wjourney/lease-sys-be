@@ -233,14 +233,18 @@ export abstract class ResourceQueryService {
     return x;
   }
   async detail(a: Actor, key: string) {
-    const r = this.resource;
-
-    return this.enrich(a, await this.access.get(a, r, key));
+    const row = await this.access.get(a, this.resource, key);
+    return {
+      ...(await this.enrich(a, row)),
+      operations: this.visibleOperations(a, row),
+    };
   }
   async operations(a: Actor, key: string) {
+    const row = await this.access.get(a, this.resource, key);
+    return this.visibleOperations(a, row);
+  }
+  protected visibleOperations(a: Actor, row: any) {
     const r = this.resource;
-
-    const row = await this.access.get(a, r, key);
     if (
       !internal(a) &&
       ["projects", "units", "settings", "fund-accounts", "materials"].includes(
