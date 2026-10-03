@@ -8,6 +8,7 @@ import { PdfService } from "../../common/storage/pdf.service";
 import { demand, fail } from "../../common/utils/errors";
 import { plain } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
+import { CONTRACT_DOCUMENT_VERSION, contractHtml } from "./contract-document";
 
 function orderContractSnapshot(o: any) {
   return plain({
@@ -54,13 +55,16 @@ export class ContractsService {
       });
       if (
         current?.storageKey &&
+        (current.contractSnapshot as any)?.documentVersion ===
+          CONTRACT_DOCUMENT_VERSION &&
         isDeepStrictEqual(
           (current.contractSnapshot as any)?.orderDetails,
           orderContractSnapshot(o),
         )
       )
         return current;
-      if (current) return this.generate(a, key, current.templateMaterialId ?? undefined);
+      if (current)
+        return this.generate(a, key, current.templateMaterialId ?? undefined);
     }
     return this.generate(a, key);
   }
@@ -115,43 +119,10 @@ export class ContractsService {
       this.db.project.findUnique({ where: { id: o.projectId } }),
       this.db.unit.findUnique({ where: { id: o.unitId } }),
     ]);
-    const dateText = (value: Date | null | undefined) =>
-      value?.toISOString().slice(0, 10) || "待填写";
-    const moneyText = (value: any) => `${o.currency} ${value}`;
-    const property = [project?.name, unit?.unitNo].filter(Boolean).join(" · ");
-    const defaultTerms = [
-      "本合同依据录入的租赁资料自动生成，供出租方与承租方核对并签署。",
-      "一、出租方同意将上列物业出租予承租方，租期、月租及押金以上表为准。",
-      "二、承租方应按约定的交租日及付款周期支付租金；首末期不足月的计算方式以上表为准。",
-      "三、物业交付、使用、维修、续租、退租及争议处理等未列事项，由双方在签署前另行确认。",
-      "四、双方签署后各执一份；未签署的文件仅为合同草稿。",
-      "出租方签署：________________    日期：________________",
-      "承租方签署：________________    日期：________________",
-    ].join("\n\n");
     const file = await this.storage.save(
       await this.pdfRenderer.pdf(
-        this.pdfRenderer.html(
-          "租赁合同（待签署）",
-          [
-            ["订单号", o.orderNo],
-            ["项目及单位", property],
-            ["物业地址", project?.address || "待填写"],
-            ["承租方类型", o.tenantType === "COMPANY" ? "公司" : "个人"],
-            ["承租方", o.tenantName],
-            ["证件／登记号码", o.tenantRegistrationNo || "待填写"],
-            ["联系人", o.tenantContactName || "待填写"],
-            ["联系电话", o.tenantPhone || "待填写"],
-            ["电子邮箱", o.tenantEmail || "待填写"],
-            ["租期", `${dateText(o.startsOn)} 至 ${dateText(o.endsOn)}`],
-            ["月租", moneyText(o.monthlyRent)],
-            ["押金", moneyText(o.depositAmount)],
-            ["交租安排", `每 ${o.paymentIntervalMonths} 个月支付，每月 ${o.rentDueDay} 日交租`],
-            ["入住日期", dateText(o.moveInOn)],
-            ["特别约定", o.remark || "无"],
-          ],
-          template?.body || defaultTerms,
-          true,
-        ),
+        contractHtml(o, project, unit, template?.body),
+        { pageNumbers: true },
       ),
       "application/pdf",
     );
@@ -192,6 +163,7 @@ export class ContractsService {
             originalName: o.orderNo + ".pdf",
             templateMaterialId: template?.id,
             contractSnapshot: plain({
+              documentVersion: CONTRACT_DOCUMENT_VERSION,
               orderNo: o.orderNo,
               tenantName: o.tenantName,
               startsOn: o.startsOn,
