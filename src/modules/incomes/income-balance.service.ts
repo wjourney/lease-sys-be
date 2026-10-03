@@ -24,8 +24,12 @@ export class IncomeBalanceService {
       total,
       confirmed,
       pending,
-      remaining: total.sub(confirmed),
-      available: total.sub(confirmed).sub(pending),
+      offset: number(parent.depositOffsetAmount),
+      remaining: total.sub(confirmed).sub(parent.depositOffsetAmount ?? 0),
+      available: total
+        .sub(confirmed)
+        .sub(pending)
+        .sub(parent.depositOffsetAmount ?? 0),
     };
   }
 }

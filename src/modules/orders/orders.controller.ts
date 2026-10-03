@@ -94,7 +94,10 @@ export class OrdersController {
     try {
       await this.contracts.ensure(r.actor, created.id);
     } catch (error) {
-      this.logger.warn(`Order ${created.id} was created without a contract`, error);
+      this.logger.warn(
+        `Order ${created.id} was created without a contract`,
+        error,
+      );
     }
     const result = await this.service.detail(r.actor, created.id);
     return {
@@ -107,10 +110,16 @@ export class OrdersController {
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    return this.service.enrich(
-      r.actor,
-      await this.service.edit(r.actor, id, body),
-    );
+    await this.service.edit(r.actor, id, body);
+    try {
+      await this.contracts.ensure(r.actor, id);
+    } catch (error) {
+      this.logger.warn(
+        `Order ${id} saved; contract generation needs retry`,
+        error,
+      );
+    }
+    return this.service.detail(r.actor, id);
   }
   @Delete(":id") async remove(
     @Req() r: any,

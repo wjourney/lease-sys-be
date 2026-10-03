@@ -1,3 +1,4 @@
+import { OrderDetailService } from "./order-detail.service";
 import { Module } from "@nestjs/common";
 import { CommonModule } from "../../common/common.module";
 import { StorageModule } from "../../common/storage/storage.module";
@@ -11,12 +12,14 @@ import { OrdersService } from "./orders.service";
   imports: [CommonModule, BillingModule, StorageModule],
   controllers: [OrdersController],
   providers: [
+    OrderDetailService,
     OrdersService,
     OrderLifecycleService,
     DepositSettlementService,
     ContractsService,
   ],
   exports: [
+    OrderDetailService,
     OrdersService,
     OrderLifecycleService,
     DepositSettlementService,

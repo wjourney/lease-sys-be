@@ -215,28 +215,27 @@ async function main() {
       endsOn: "2027-09-30",
       monthlyRent: String(5400 + n * 400),
       depositAmount: String((5400 + n * 400) * 2),
+      commission: { amount: "1200" },
       paymentIntervalMonths: 1,
       rentDueDay: 1,
       billLeadDays: 7,
       firstPeriodProration: true,
       lastPeriodProration: true,
     });
-    await insert(
-      db,
-      "commissions",
-      {
+    const commission = await db.commission.findFirstOrThrow({
+      where: { orderId: o.id },
+    });
+    await db.commission.update({
+      where: { id: commission.id },
+      data: {
         commissionNo: "CM20261000" + (n + 1),
-        orderId: o.id,
-        salesCompanyId: o.salesCompanyId,
-        salesUserId: o.salesUserId,
         mode: "MONTHLY",
         periodStart: new Date("2026-10-01"),
         periodEnd: new Date("2026-10-31"),
         dueOn: new Date("2026-11-05"),
         amount: n === 1 ? null : 1200,
       },
-      a,
-    );
+    });
   }
   await insert(
     db,

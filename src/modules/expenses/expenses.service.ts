@@ -20,6 +20,8 @@ export class ExpensesService extends ResourceService {
     super(db, access);
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
+    if (!row && data.feeType === "DEPOSIT_REFUND")
+      fail("押金退款请通过订单结算生成");
     if (data.orderId) {
       const o = await this.access.get(a, "orders", data.orderId, tx);
       data.projectId = o.projectId;
@@ -35,7 +37,7 @@ export class ExpensesService extends ResourceService {
     if (
       row.status !== "UNPAID" ||
       row.commissionId ||
-      row.feeType === "DEPOSIT_REFUND"
+      ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动生成的支出不能直接修改");
   }
@@ -43,7 +45,7 @@ export class ExpensesService extends ResourceService {
     if (
       row.status === "PAID" ||
       row.commissionId ||
-      row.feeType === "DEPOSIT_REFUND"
+      ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动产生的支出不能删除");
   }

@@ -718,6 +718,7 @@ test("full workflow and authorization invariants", async (t) => {
           endsOn: "2027-09-30",
           monthlyRent: "5800",
           depositAmount: "11600",
+          commission: { amount: "200" },
         },
         409,
       );
@@ -976,14 +977,22 @@ test("full workflow and authorization invariants", async (t) => {
       monthlyRent: "5800",
       depositAmount: "11600",
       depositPlan: "TWO_ONE",
+      commission: {
+        mode: "ONE_TIME",
+        dueOn: "2026-11-05",
+        amount: "200",
+        remark: "首月佣金",
+      },
       moveInOn: "2026-11-01",
       initialPayment: {
+        paymentState: "PARTIAL",
         paid: true,
         rentPaid: true,
         depositPaid: false,
         rentReceived: "5800",
         depositReceived: "0",
         dueOn: "2026-10-28",
+        receivedOn: "2026-10-28",
       },
     };
     await admin.call("POST", "/orders", {
@@ -993,6 +1002,26 @@ test("full workflow and authorization invariants", async (t) => {
     await admin.call("POST", "/orders", {
       ...body,
       registrationNoType: "HKID",
+    }, 400);
+    await admin.call("POST", "/orders", {
+      ...body,
+      commission: { ...body.commission, dueOn: undefined },
+    }, 400);
+    await admin.call("POST", "/orders", {
+      ...body,
+      commission: undefined,
+    }, 400);
+    await admin.call("POST", "/orders", {
+      ...body,
+      commission: { amount: "0" },
+    }, 400);
+    await admin.call("POST", "/orders", {
+      ...body,
+      initialPayment: {
+        ...body.initialPayment,
+        paymentState: "PAID",
+        receivedOn: "2026-10-28",
+      },
     }, 400);
     const created = await admin.call("POST", "/orders", body, 201);
     assert.ok(created.currentContractMaterialId);
@@ -1017,6 +1046,13 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.depositPlan, "TWO_ONE");
     assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
     assert.equal(detail.initialPayment.rentReceived, "5800");
+    assert.equal(detail.initialPayment.paymentState, "PARTIAL");
+    assert.equal(Number(detail.orderCommission.amount), 200);
+    assert.equal(detail.orderCommission.mode, "ONE_TIME");
+    assert.equal(detail.orderCommission.periodStart.slice(0, 10), "2026-11-01");
+    assert.equal(detail.orderCommission.periodEnd.slice(0, 10), "2027-10-31");
+    assert.equal(detail.orderCommission.dueOn.slice(0, 10), "2026-11-05");
+    assert.equal(detail.commissions.length, 1);
     assert.equal(detail.status, "PENDING");
     const edited = await admin.call("PATCH", `/orders/${created.id}`, {
       revision: detail.revision,
@@ -1030,6 +1066,17 @@ test("full workflow and authorization invariants", async (t) => {
       tenantContactName: "",
       depositPlan: null,
       moveInOn: null,
+      initialPayment: {
+        paymentState: "PAID",
+        paid: true,
+        rentPaid: true,
+        depositPaid: true,
+        rentReceived: "5800",
+        depositReceived: "11600",
+        dueOn: "2026-10-28",
+        receivedOn: "2026-10-28",
+      },
+      commission: { ...body.commission, amount: "250" },
     });
     assert.equal(edited.tenantType, "PERSON");
     assert.equal(edited.tenantName, "新租客");
@@ -1037,6 +1084,10 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(edited.tenantRegistrationNo, "");
     assert.equal(edited.depositPlan, null);
     assert.equal(edited.moveInOn, null);
+    assert.equal(edited.initialPayment.paymentState, "PAID");
+    assert.equal(edited.initialPayment.depositReceived, "11600");
+    assert.equal(Number(edited.orderCommission.amount), 250);
+    assert.equal(edited.orderCommission.id, detail.orderCommission.id);
     assert.deepEqual(edited.tenantSnapshot, {
       name: "新租客",
       phone: "12345678",
@@ -1051,6 +1102,72 @@ test("full workflow and authorization invariants", async (t) => {
     assert.notEqual(updatedContract.id, created.currentContractMaterialId);
     const refreshed = await admin.call("GET", `/orders/${created.id}`);
     assert.equal(refreshed.currentContractMaterialId, updatedContract.id);
+  });
+  await t.test("monthly commission creates installments and edits with the lease", async () => {
+    const template = await admin.call("GET", `/units/${order.unitId}`);
+    const unit = await admin.call(
+      "POST",
+      "/units",
+      {
+        projectId: template.projectId,
+        unitNo: `月结佣金-${randomUUID().slice(0, 8)}`,
+        unitTypeCode: template.unitTypeCode,
+        area: "38",
+        referenceRent: "5800",
+        minRent: "5000",
+        maxRent: "6500",
+        minLeaseMonths: 1,
+      },
+      201,
+    );
+    let created = await admin.call("POST", "/orders", {
+      unitId: unit.id,
+      salesUserId: order.salesUserId,
+      tenantType: "PERSON",
+      tenantName: "月结租客",
+      startsOn: "2026-11-01",
+      endsOn: "2027-01-31",
+      monthlyRent: "5800",
+      depositAmount: "5800",
+      depositPlan: "ONE_ONE",
+      commission: {
+        mode: "RECURRING_MONTHLY",
+        dueOn: "2026-11-05",
+        amount: "100",
+      },
+    }, 201);
+    let detail = await admin.call("GET", `/orders/${created.id}`);
+    let installments = detail.commissions.filter((c: any) => c.status !== "VOID");
+    assert.equal(installments.length, 3);
+    assert.deepEqual(installments.map((c: any) => c.dueOn.slice(0, 10)), [
+      "2026-11-05", "2026-12-05", "2027-01-05",
+    ]);
+    assert(installments.every((c: any) => c.mode === "RECURRING_MONTHLY" && Number(c.amount) === 100));
+    created = await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision,
+      reason: "延长租期",
+      endsOn: "2027-02-28",
+      commission: {
+        mode: "RECURRING_MONTHLY",
+        dueOn: "2026-11-05",
+        amount: "100",
+      },
+    });
+    detail = await admin.call("GET", `/orders/${created.id}`);
+    installments = detail.commissions.filter((c: any) => c.status !== "VOID");
+    assert.equal(installments.length, 4);
+    assert.equal(installments[3].dueOn.slice(0, 10), "2027-02-05");
+    await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision,
+      reason: "改为一次性结付",
+      commission: { mode: "ONE_TIME", dueOn: "2026-12-01", amount: "400" },
+    });
+    detail = await admin.call("GET", `/orders/${created.id}`);
+    installments = detail.commissions.filter((c: any) => c.status !== "VOID");
+    assert.equal(installments.length, 1);
+    assert.equal(installments[0].mode, "ONE_TIME");
+    assert.equal(installments[0].periodEnd.slice(0, 10), "2027-02-28");
+    assert.equal(installments[0].dueOn.slice(0, 10), "2026-12-01");
   });
   await t.test(
     "material versions keep one current record and retain private ownership",
@@ -1231,6 +1348,323 @@ test("full workflow and authorization invariants", async (t) => {
         body: tooLarge,
       });
       assert.equal(rejected.status, 413);
+    },
+  );
+});
+
+test("order detail, bill synchronization and deposit lifecycle", async (t) => {
+  // Fresh authentication keeps these cases independent of the account tests above.
+  await admin.login("admin");
+  await finance.login("finance");
+  await sales.login("sales");
+  const template = await admin.call("GET", `/units/${order.unitId}`);
+  async function create(depositAmount = "1200") {
+    const unit = await admin.call(
+      "POST",
+      "/units",
+      {
+        projectId: template.projectId,
+        unitNo: `押金流程-${randomUUID().slice(0, 8)}`,
+        unitTypeCode: template.unitTypeCode,
+        area: "38",
+        referenceRent: "1000",
+        minRent: "900",
+        maxRent: "1500",
+        minLeaseMonths: 1,
+      },
+      201,
+    );
+    return admin.call(
+      "POST",
+      "/orders",
+      {
+        unitId: unit.id,
+        salesUserId: order.salesUserId,
+        tenantType: "PERSON",
+        tenantName: "结算租客",
+        startsOn: "2026-11-01",
+        endsOn: "2026-11-30",
+        monthlyRent: "1000",
+        depositAmount,
+        commission: { amount: "100" },
+      },
+      201,
+    );
+  }
+  async function detail(id: string) {
+    return admin.call("GET", `/orders/${id}`);
+  }
+  async function receive(bill: any, amount: string) {
+    const r = await sales.call(
+      "POST",
+      `/incomes/${bill.id}/receipts`,
+      {
+        amount,
+        receivedOn: "2026-11-01",
+        fundAccountId: account.id,
+        paymentMethod: "BANK",
+        payerName: "结算租客",
+        sourceKey: randomUUID(),
+      },
+      201,
+    );
+    await finance.call("POST", `/incomes/${r.id}/confirm`, undefined, 201);
+    return r;
+  }
+  async function end(id: string, date = "2026-11-30") {
+    await admin.call(
+      "POST",
+      `/orders/${id}/terminate`,
+      { date, reason: "退租核算" },
+      201,
+    );
+    await admin.call(
+      "POST",
+      `/orders/${id}/handover`,
+      { date, note: "已交还钥匙" },
+      201,
+    );
+  }
+  await t.test(
+    "edit rebuilds unpaid bills; offsets and partial refunds keep one ledger",
+    async () => {
+      let o = await create();
+      const oldContract = o.currentContractMaterialId;
+      o = await admin.call("PATCH", `/orders/${o.id}`, {
+        revision: o.revision,
+        reason: "租金核对",
+        monthlyRent: "1100",
+      });
+      assert.notEqual(o.currentContractMaterialId, oldContract);
+      const active = o.bills.filter((b: any) => b.status !== "VOID");
+      assert.equal(active.length, 2);
+      assert.equal(o.bills.filter((b: any) => b.status === "VOID").length, 2);
+      assert.equal(
+        Number(active.find((b: any) => b.feeType === "RENT").total),
+        1100,
+      );
+      assert.equal(o.actions.edit, true);
+      for (const b of active) await receive(b, b.total);
+      o = await detail(o.id);
+      assert.equal(o.status, "ACTIVE");
+      assert.equal(o.firstPaymentStatus, "PAID");
+      assert.equal(o.deposit.state, "HELD");
+      assert.equal(o.actions.edit, true);
+      assert.equal(o.actions.editLease, false);
+      o = await admin.call("PATCH", `/orders/${o.id}`, {
+        revision: o.revision,
+        reason: "更新租客联系方式",
+        tenantPhone: "98765432",
+      });
+      assert.equal(o.tenantPhone, "98765432");
+      assert.equal(o.tenantSnapshot.phone, "98765432");
+      await admin.call(
+        "PATCH",
+        `/orders/${o.id}`,
+        { revision: o.revision, reason: "禁止已收款修改", monthlyRent: "1000" },
+        400,
+      );
+      await admin.call("POST", `/orders/${o.id}/close`, undefined, 400);
+      const bill = await finance.call(
+        "POST",
+        "/incomes",
+        {
+          orderId: o.id,
+          feeType: "OTHER",
+          amount: "900",
+          dueOn: "2026-11-15",
+          payerName: "结算租客",
+        },
+        201,
+      );
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        { deductionAmount: "0", reason: "未交还" },
+        400,
+      );
+      await end(o.id, "2026-11-15");
+      o = await detail(o.id);
+      assert.equal(o.deposit.state, "SETTLEMENT_PENDING");
+      assert.equal(o.rentRefunds.length, 1);
+      assert.equal(Number(o.rentRefunds[0].amount), 550);
+      const settlement = {
+        deductionAmount: "300",
+        reason: "抵扣水电欠费",
+        items: [
+          {
+            label: "水电费",
+            amount: "300",
+            note: "账单抵扣",
+            incomeId: bill.id,
+          },
+        ],
+      };
+      await sales.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        settlement,
+        403,
+      );
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        { ...settlement, deductionAmount: "400" },
+        400,
+      );
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        settlement,
+        201,
+      );
+      // Identical retries must not create another refund or another offset.
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        settlement,
+        201,
+      );
+      o = await detail(o.id);
+      assert.equal(o.deposit.refunds.length, 1);
+      assert.equal(Number(o.deposit.refundDue), 900);
+      assert.equal(
+        Number(o.bills.find((b: any) => b.id === bill.id).remaining),
+        600,
+      );
+      assert.equal(
+        Number((await finance.call("GET", `/incomes/${bill.id}`)).remaining),
+        600,
+      );
+      const salesDetail = await sales.call("GET", `/orders/${o.id}`);
+      assert.equal(salesDetail.deposit.refunds.length, 0);
+      assert.equal(salesDetail.rentRefunds.length, 0);
+      assert.equal(salesDetail.actions.refund, false);
+      const refund = o.deposit.refunds[0];
+      const pay = {
+        amount: "400",
+        sourceKey: randomUUID(),
+        paidOn: "2026-11-16",
+        fundAccountId: account.id,
+        paymentMethod: "BANK",
+      };
+      await finance.call("POST", `/expenses/${refund.id}/pay`, pay, 201);
+      await finance.call("POST", `/expenses/${refund.id}/pay`, pay, 201);
+      o = await detail(o.id);
+      assert.equal(Number(o.deposit.refunded), 400);
+      assert.equal(Number(o.deposit.refundDue), 500);
+      assert.equal(o.deposit.refunds[0].paymentRecords.length, 1);
+      await finance.call(
+        "POST",
+        `/expenses/${refund.id}/pay`,
+        { ...pay, sourceKey: randomUUID(), amount: "501" },
+        400,
+      );
+      await finance.call(
+        "POST",
+        `/expenses/${refund.id}/pay`,
+        { ...pay, sourceKey: randomUUID(), amount: "500" },
+        201,
+      );
+      o = await detail(o.id);
+      assert.equal(o.deposit.state, "SETTLED");
+      assert.equal(Number(o.deposit.held), 0);
+      assert.equal(o.deposit.refunds[0].status, "PAID");
+      assert.equal(o.deposit.refunds[0].paymentRecords.length, 2);
+      assert.ok(o.operations.some((x: any) => x.reason === "抵扣水电欠费"));
+      const commission = o.commissions.find((c: any) => c.status !== "VOID");
+      assert.ok(commission);
+      await finance.call(
+        "POST",
+        `/commissions/${commission.id}/payments`,
+        {
+          amount: "100",
+          sourceKey: randomUUID(),
+          paidOn: "2026-12-01",
+          fundAccountId: account.id,
+          paymentMethod: "BANK",
+        },
+        201,
+      );
+      const paidCommission = (await detail(o.id)).commissions.find(
+        (c: any) => c.id === commission.id,
+      );
+      assert.equal(paidCommission.status, "PAID");
+      assert.equal(Number(paidCommission.remainingAmount), 0);
+      assert.equal(Number(paidCommission.availableAmount), 0);
+
+      assert.ok(
+        o.materials.some((x: any) => x.id === o.currentContractMaterialId),
+      );
+    },
+  );
+  await t.test(
+    "zero deposit activation ignores voided old deposit; no refund expense",
+    async () => {
+      let o = await create("500");
+      o = await admin.call("PATCH", `/orders/${o.id}`, {
+        revision: o.revision,
+        reason: "免押金",
+        depositAmount: "0",
+      });
+      const rent = o.bills.find(
+        (b: any) => b.feeType === "RENT" && b.status !== "VOID",
+      );
+      await receive(rent, rent.total);
+      o = await detail(o.id);
+      assert.equal(o.status, "ACTIVE");
+      await end(o.id);
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        { deductionAmount: "0", reason: "无押金无需退款", items: [] },
+        201,
+      );
+      o = await detail(o.id);
+      assert.equal(o.deposit.state, "SETTLED");
+      assert.equal(o.deposit.refunds.length, 0);
+    },
+  );
+  await t.test(
+    "full deposit deduction creates no refund and cannot change settled amount",
+    async () => {
+      let o = await create("500");
+      o = await detail(o.id);
+      for (const b of o.bills) await receive(b, b.total);
+      await end(o.id);
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        { deductionAmount: "501", reason: "超额扣除" },
+        400,
+      );
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        {
+          deductionAmount: "500",
+          reason: "维修扣除",
+          items: [{ label: "维修", amount: "500", note: "门锁更换" }],
+        },
+        201,
+      );
+      o = await detail(o.id);
+      assert.equal(o.deposit.refunds.length, 0);
+      assert.equal(Number(o.deposit.held), 0);
+      assert.equal(o.deposit.state, "SETTLED");
+      const deposit = o.bills.find((b: any) => b.feeType === "DEPOSIT");
+      await finance.call(
+        "POST",
+        `/incomes/${deposit.id}/adjust`,
+        { amount: "600", reason: "不可变更押金", revision: deposit.revision },
+        400,
+      );
+      await finance.call(
+        "POST",
+        `/orders/${o.id}/deposit-settlement`,
+        { deductionAmount: "400", reason: "不可重复结算" },
+        400,
+      );
     },
   );
 });

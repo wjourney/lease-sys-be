@@ -22,9 +22,23 @@ export const OrdersSchema = z.object({
   monthlyRent: money,
   depositAmount: money,
   depositPlan: z.enum(["ONE_ONE", "TWO_ONE", "THREE_ONE", "OTHER"]).optional(),
+  commission: z
+    .object({
+      mode: z
+        .enum(["MONTHLY", "YEARLY", "ONE_TIME", "RECURRING_MONTHLY"])
+        .optional(),
+      periodStart: date.optional(),
+      periodEnd: date.optional(),
+      dueOn: date.optional(),
+      amount: money,
+      remark: opt,
+    })
+    .strict()
+    .optional(),
   moveInOn: date.optional(),
   initialPayment: z
     .object({
+      paymentState: z.enum(["UNPAID", "PARTIAL", "PAID"]).optional(),
       paid: z.boolean(),
       rentPaid: z.boolean(),
       depositPaid: z.boolean(),

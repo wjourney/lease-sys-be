@@ -56,6 +56,10 @@ export class ReceiptsService {
           fail("重复提交编号冲突");
         return exists;
       }
+      if (root.orderId && root.feeType === "DEPOSIT") {
+        const order = await this.access.get(a, "orders", root.orderId, tx);
+        if (order.depositSettledAt) fail("押金已结算，不能继续登记收款");
+      }
       const sums = await this.balances.totals(tx, key);
       if (number(d.amount).lte(0) || number(d.amount).gt(sums.available))
         fail("金额超过可登记余额");
@@ -173,6 +177,8 @@ export class ReceiptsService {
               where: {
                 orderId: o.id,
                 recordType: "RECEIVABLE",
+                deletedAt: null,
+                status: { not: "VOID" },
                 OR: [
                   { feeType: "DEPOSIT" },
                   {

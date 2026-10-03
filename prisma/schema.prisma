@@ -176,6 +176,7 @@ model Order {
   handoverNote              String? @db.Text
   depositDeductionAmount    Decimal   @default(0) @db.Decimal(18, 2)
   depositDeductionReason    String? @db.Text
+  depositDeductions         Json      @default("[]")
   depositSettledAt          DateTime?
   tenantSnapshot            Json      @default("{}")
   unitSnapshot              Json      @default("{}")
@@ -207,6 +208,7 @@ model Income {
   feeType          String
   amount           Decimal   @db.Decimal(18, 2)
   adjustmentAmount Decimal   @default(0) @db.Decimal(18, 2)
+  depositOffsetAmount Decimal @default(0) @db.Decimal(18, 2)
   currency         String    @default("HKD")
   periodStart      DateTime? @db.Date
   periodEnd        DateTime? @db.Date
@@ -251,6 +253,7 @@ model Expense {
   feeType          String
   amount           Decimal   @db.Decimal(18, 2)
   paidAmount       Decimal   @default(0) @db.Decimal(18, 2)
+  paymentRecords   Json      @default("[]")
   currency         String    @default("HKD")
   dueOn            DateTime? @db.Date
   paidOn           DateTime? @db.Date

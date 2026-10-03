@@ -40,6 +40,12 @@ export class IncomesService extends ResourceService {
   }
   protected async beforeEdit(a: Actor, d: any, tx: any, row: any) {
     const key = row.id;
+    if (row.sourceKey?.startsWith("rent:"))
+      fail("自动租金账单请通过订单修改或财务调整处理");
+    if (number(row.depositOffsetAmount).gt(0))
+      fail("已使用押金抵扣，不能直接修改或删除应收");
+    if (row.orderId && row.feeType === "DEPOSIT")
+      fail("订单押金由租约管理，不能直接修改或删除");
     if (row.recordType !== "RECEIVABLE" || row.status === "VOID")
       fail("只能修改有效应收主记录");
     const n = await tx.income.count({
@@ -60,6 +66,12 @@ export class IncomesService extends ResourceService {
   }
   protected async beforeRemove(a: Actor, tx: any, row: any) {
     const key = row.id;
+    if (row.sourceKey?.startsWith("rent:"))
+      fail("自动租金账单请通过订单修改或财务调整处理");
+    if (number(row.depositOffsetAmount).gt(0))
+      fail("已使用押金抵扣，不能直接修改或删除应收");
+    if (row.orderId && row.feeType === "DEPOSIT")
+      fail("订单押金由租约管理，不能直接修改或删除");
     if (
       row.recordType !== "RECEIVABLE" ||
       (await tx.income.count({
@@ -74,6 +86,8 @@ export class IncomesService extends ResourceService {
       fail("实际收款及已有收款的应收不能删除");
   }
   protected async beforeCreate(a: Actor, d: any, tx: any) {
+    if (d.orderId && d.feeType === "DEPOSIT")
+      fail("订单押金由租约自动生成，请勿重复新增");
     d.recordType = "RECEIVABLE";
     if (d.recurrenceRule?.frequency === "MONTHLY")
       d.nextGenerationOn = plusMonths(d.dueOn, 1);
@@ -95,8 +109,14 @@ export class IncomesService extends ResourceService {
         fail("请选择有效应收");
       if (row.revision !== d.revision)
         throw new ConflictException("记录已更新");
+      if (row.orderId && row.feeType === "DEPOSIT")
+        fail("订单押金由租约管理，请在押金管理中办理结算");
       const totals = await this.balances.totals(tx, key);
-      if (number(d.amount).lt(totals.confirmed.add(totals.pending)))
+      if (
+        number(d.amount).lt(
+          totals.confirmed.add(totals.pending).add(totals.offset),
+        )
+      )
         fail("调整后应收不能小于已确认及待确认金额");
       return update(
         tx,
@@ -104,7 +124,7 @@ export class IncomesService extends ResourceService {
         row,
         {
           adjustmentAmount: number(d.amount).sub(row.amount),
-          status: number(d.amount).eq(totals.confirmed)
+          status: number(d.amount).eq(totals.confirmed.add(totals.offset))
             ? "PAID"
             : totals.confirmed.gt(0)
               ? "PARTIAL"
