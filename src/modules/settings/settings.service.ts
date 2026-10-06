@@ -19,6 +19,7 @@ export class SettingsService extends ResourceService {
     super(db, access);
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
+    if ((data.key ?? row?.key) === "website") fail("请使用网站配置页面修改");
     if ((data.key ?? row?.key) === "unit_types") {
       const values = z
         .array(

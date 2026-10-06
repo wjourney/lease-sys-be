@@ -96,7 +96,9 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       endpoint.protocol !== "https:" ||
       !/^oss-[a-z0-9-]+\.aliyuncs\.com$/.test(endpoint.hostname)
     )
-      throw new Error("OSS_PUBLIC_ENDPOINT must be a public HTTPS OSS endpoint");
+      throw new Error(
+        "OSS_PUBLIC_ENDPOINT must be a public HTTPS OSS endpoint",
+      );
     this.publicClient = new OSS({
       endpoint: endpoint.href,
       bucket: process.env.OSS_BUCKET!,
@@ -110,10 +112,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
     });
     return this.publicClient;
   }
-  async previewUrl(
-    ref: StoredReference,
-    fallbackUrl: string,
-  ): Promise<string> {
+  async previewUrl(ref: StoredReference, fallbackUrl: string): Promise<string> {
     this.validate(ref);
     if (ref.storageProvider === "LOCAL") return fallbackUrl;
     try {
@@ -263,7 +262,7 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
       storageProvider: input.storageProvider,
       storageKey: input.storageKey,
     };
-    const [materials, users] = await Promise.all([
+    const [materials, users, website] = await Promise.all([
       this.db.material.count({ where: ref }),
       this.db.user.count({
         where: {
@@ -271,8 +270,17 @@ export class StorageService implements OnModuleInit, OnModuleDestroy {
           avatarStorageKey: ref.storageKey,
         },
       }),
+      this.db.systemSetting.findUnique({
+        where: { key: "website" },
+        select: { value: true },
+      }),
     ]);
-    return materials + users > 0;
+    const logo = (website?.value as any)?.logo;
+    return (
+      materials + users > 0 ||
+      (logo?.storageProvider === ref.storageProvider &&
+        logo?.storageKey === ref.storageKey)
+    );
   }
   async collectGarbage() {
     if (this.cleaning) return;

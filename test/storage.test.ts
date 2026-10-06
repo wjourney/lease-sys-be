@@ -45,6 +45,7 @@ function database() {
         references.has(where.storageKey) ? 1 : 0,
     },
     user: { count: async () => 0 },
+    systemSetting: { findUnique: async (): Promise<any> => null },
   };
 }
 
@@ -63,6 +64,29 @@ test("HTTP byte ranges include prefix, suffix, open-ended and unsatisfiable case
   assert.equal(parseRange("bytes=0-", 0), "unsatisfiable");
   assert.equal(parseRange("bytes=0-1,4-5", 10), undefined);
   assert.equal(parseRange("bogus", 10), undefined);
+});
+
+test("storage cleanup preserves the active website logo only", async () => {
+  const db = database();
+  db.systemSetting.findUnique = async () => ({
+    value: { logo: { storageProvider: "LOCAL", storageKey: "logo" } },
+  });
+  const storage = new StorageService(db as any);
+  assert.equal(
+    await storage.referenced({ storageProvider: "LOCAL", storageKey: "logo" }),
+    true,
+  );
+  assert.equal(
+    await storage.referenced({
+      storageProvider: "LOCAL",
+      storageKey: "old-logo",
+    }),
+    false,
+  );
+  assert.equal(
+    await storage.referenced({ storageProvider: "OSS", storageKey: "logo" }),
+    false,
+  );
 });
 
 test("local storage streams bytes and GC preserves even historical references", async () => {
@@ -165,8 +189,7 @@ test("preview URLs use V4 signatures on the public OSS endpoint while local file
   };
   try {
     process.env.STORAGE_PROVIDER = "LOCAL";
-    process.env.OSS_ENDPOINT =
-      "https://oss-cn-shanghai-internal.aliyuncs.com";
+    process.env.OSS_ENDPOINT = "https://oss-cn-shanghai-internal.aliyuncs.com";
     process.env.OSS_BUCKET = "example-private-bucket";
     process.env.OSS_ACCESS_KEY_ID = "test-key";
     process.env.OSS_ACCESS_KEY_SECRET = "test-secret";
@@ -190,8 +213,14 @@ test("preview URLs use V4 signatures on the public OSS endpoint while local file
         fallback,
       ),
     );
-    assert.equal(url.hostname, "example-private-bucket.oss-cn-shanghai.aliyuncs.com");
-    assert.equal(url.searchParams.get("x-oss-signature-version"), "OSS4-HMAC-SHA256");
+    assert.equal(
+      url.hostname,
+      "example-private-bucket.oss-cn-shanghai.aliyuncs.com",
+    );
+    assert.equal(
+      url.searchParams.get("x-oss-signature-version"),
+      "OSS4-HMAC-SHA256",
+    );
     assert.ok(url.searchParams.has("x-oss-signature"));
     assert.ok(!url.hostname.includes("-internal"));
   } finally {

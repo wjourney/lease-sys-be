@@ -10,13 +10,37 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { SettingsService } from "./settings.service";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { WebsiteService } from "./website.service";
 @ApiTags("settings")
 @Controller("settings")
 export class SettingsController {
-  constructor(@Inject(SettingsService) private service: SettingsService) {}
+  constructor(
+    @Inject(SettingsService) private service: SettingsService,
+    @Inject(WebsiteService) private website: WebsiteService,
+  ) {}
+
+  @Get("website") websiteRead(@Req() r: any) {
+    return this.website.adminRead(r.actor);
+  }
+  @Post("website")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+    }),
+  )
+  websiteSave(
+    @Req() r: any,
+    @Body("payload") payload: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.website.save(r.actor, payload, file);
+  }
 
   @Get() list(@Req() r: any, @Query() q: any) {
     return this.service.list(r.actor, q);
