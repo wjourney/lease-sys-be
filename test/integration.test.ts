@@ -97,6 +97,23 @@ test("full workflow and authorization invariants", async (t) => {
     await sales.call("GET", "/incomes/bills?from=2026-02-30", undefined, 400);
     assert.equal((await sales.call("GET", "/incomes/bills?currency=USD")).total, 0);
   });
+  await t.test("employee reads own company and own commission reports but cannot mutate business data", async () => {
+    const companies = await sales.call("GET", "/sales-companies");
+    assert.equal(companies.total, 1);
+    assert.equal(companies.items[0].id, sa.salesCompanyId);
+    await sales.call("PATCH", `/sales-companies/${sa.salesCompanyId}`, { revision: companies.items[0].revision, name: "forbidden" }, 403);
+    await sales.call("POST", "/orders", {}, 403);
+    await sales.call("POST", `/incomes/${root.id}/receipts`, {}, 403);
+    const q = "/company-commissions?from=2026-01-01&to=2028-12-31";
+    const commissions = await sales.call("GET", q);
+    assert.ok(commissions.items.every((r: any) => r.salesUserId === sa.id));
+    assert.ok(commissions.employees.every((r: any) => r.id === sa.id));
+    await sales.call("GET", q + "&salesUserId=" + a.id, undefined, 403);
+    for (const path of ["/settings", "/fund-accounts"]) await sales.call("GET", path, undefined, 403);
+    const me = await operations.call("GET", "/auth/me");
+    for (const r of ["users", "settings", "fund-accounts", "sales-companies", "projects", "orders"]) assert.ok(me.capabilities.write.includes(r));
+    assert.equal(me.capabilities.finance, false);
+  });
   await t.test("five roles and company scopes", async () => {
     assert.equal((await admin.call("GET", "/users")).total, 6);
     const mine = await sales.call("GET", "/orders");
@@ -147,7 +164,7 @@ test("full workflow and authorization invariants", async (t) => {
     "member account creation, password reset and disable",
     async () => {
       const username = `13${randomInt(100_000_000, 1_000_000_000)}`;
-      const created = await admin.call(
+      const created = await operations.call(
         "POST",
         "/users",
         {
@@ -160,13 +177,13 @@ test("full workflow and authorization invariants", async (t) => {
       );
       assert.equal(created.username, username);
       assert.ok(created.initialPassword?.length >= 10);
-      await admin.call(
+      await operations.call(
         "POST",
         "/users",
         { name: "重复手机号", phone: username, role: "OPERATIONS" },
         409,
       );
-      await admin.call(
+      await operations.call(
         "POST",
         "/users",
         {
@@ -177,18 +194,18 @@ test("full workflow and authorization invariants", async (t) => {
         },
         400,
       );
-      const createdDetail = await admin.call("GET", `/users/${created.id}`);
-      await admin.call(
+      const createdDetail = await operations.call("GET", `/users/${created.id}`);
+      await operations.call(
         "PATCH",
         `/users/${created.id}`,
         { revision: createdDetail.revision, phone: "13800001111" },
         400,
       );
-      const expiring = await admin.call("PATCH", `/users/${created.id}`, {
+      const expiring = await operations.call("PATCH", `/users/${created.id}`, {
         revision: createdDetail.revision,
         expiresAt: "2027-10-01",
       });
-      const ongoing = await admin.call("PATCH", `/users/${created.id}`, {
+      const ongoing = await operations.call("PATCH", `/users/${created.id}`, {
         revision: expiring.revision,
         expiresAt: null,
       });
@@ -233,12 +250,12 @@ test("full workflow and authorization invariants", async (t) => {
       );
       const forbiddenUpload = await fetch(base + `/users/${a.id}/avatar`, {
         method: "POST",
-        headers: { Cookie: member.cookies, "X-CSRF-Token": member.csrf },
+        headers: { Cookie: sales.cookies, "X-CSRF-Token": sales.csrf },
         body: otherAvatar,
       });
       assert.equal(forbiddenUpload.status, 403);
       assert.equal(
-        (await admin.call("GET", `/users/${created.id}`)).avatarUrl,
+        (await operations.call("GET", `/users/${created.id}`)).avatarUrl,
         `/api/v1/users/${created.id}/avatar`,
       );
       const avatarImage = await fetch(base + `/users/${created.id}/avatar`, {
@@ -246,7 +263,7 @@ test("full workflow and authorization invariants", async (t) => {
       });
       assert.equal(avatarImage.status, 200);
       assert.equal(avatarImage.headers.get("content-type"), "image/png");
-      const reset = await admin.call(
+      const reset = await operations.call(
         "POST",
         `/users/${created.id}/reset-password`,
         {},
@@ -274,7 +291,7 @@ test("full workflow and authorization invariants", async (t) => {
         },
         403,
       );
-      const secondAdmin = await admin.call(
+      const secondAdmin = await operations.call(
         "POST",
         "/users",
         {
@@ -285,14 +302,14 @@ test("full workflow and authorization invariants", async (t) => {
         },
         201,
       );
-      const disabledAdmin = await admin.call(
+      const disabledAdmin = await operations.call(
         "POST",
         `/users/${secondAdmin.id}/disable`,
         { reason: "测试停用其他管理员" },
         201,
       );
       assert.equal(disabledAdmin.status, "DISABLED");
-      const enabledAdmin = await admin.call(
+      const enabledAdmin = await operations.call(
         "PATCH",
         `/users/${secondAdmin.id}`,
         {
@@ -301,7 +318,7 @@ test("full workflow and authorization invariants", async (t) => {
           reason: "测试重新启用其他管理员",
         },
       );
-      const patchedAdmin = await admin.call(
+      const patchedAdmin = await operations.call(
         "PATCH",
         `/users/${secondAdmin.id}`,
         {
@@ -311,12 +328,12 @@ test("full workflow and authorization invariants", async (t) => {
         },
       );
       assert.equal(patchedAdmin.status, "DISABLED");
-      await admin.call(
+      await operations.call(
         "DELETE",
         `/users/${secondAdmin.id}`,
         { reason: "测试删除其他管理员" },
       );
-      await admin.call("GET", `/users/${secondAdmin.id}`, undefined, 404);
+      await operations.call("GET", `/users/${secondAdmin.id}`, undefined, 404);
       await admin.call(
         "POST",
         `/users/${a.id}/disable`,
@@ -329,7 +346,7 @@ test("full workflow and authorization invariants", async (t) => {
         { reason: "不能删除自己" },
         400,
       );
-      const disabled = await admin.call(
+      const disabled = await operations.call(
         "POST",
         `/users/${created.id}/disable`,
         { reason: "测试停用" },
@@ -381,13 +398,13 @@ test("full workflow and authorization invariants", async (t) => {
         payerName: order.tenantName,
         sourceKey: randomUUID(),
       };
-      receipt = await sales.call(
+      receipt = await operations.call(
         "POST",
         "/incomes/" + root.id + "/receipts",
         body,
         201,
       );
-      const same = await sales.call(
+      const same = await operations.call(
         "POST",
         "/incomes/" + root.id + "/receipts",
         body,
@@ -445,8 +462,8 @@ test("full workflow and authorization invariants", async (t) => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Cookie: sales.cookies,
-            "X-CSRF-Token": sales.csrf,
+            Cookie: operations.cookies,
+            "X-CSRF-Token": operations.csrf,
           },
           body: JSON.stringify({
             amount: d.available,
@@ -478,7 +495,7 @@ test("full workflow and authorization invariants", async (t) => {
     for (const r of roots) {
       const d = await sales.call("GET", "/incomes/" + r.id);
       if (Number(d.available) > 0) {
-        const receipt = await sales.call(
+        const receipt = await operations.call(
           "POST",
           "/incomes/" + r.id + "/receipts",
           {
@@ -1126,7 +1143,7 @@ test("full workflow and authorization invariants", async (t) => {
       phone: "12345678",
       email: "new-tenant@example.com",
     });
-    const updatedContract = await sales.call(
+    const updatedContract = await operations.call(
       "POST",
       `/orders/${created.id}/contract/ensure`,
       undefined,
@@ -1439,7 +1456,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
     return admin.call("GET", `/orders/${id}`);
   }
   async function receive(bill: any, amount: string) {
-    const r = await sales.call(
+    const r = await operations.call(
       "POST",
       `/incomes/${bill.id}/receipts`,
       {

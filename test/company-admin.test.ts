@@ -23,7 +23,7 @@ const actor: any = {
 };
 const query = { from: "2026-01-01", to: "2026-03-31" };
 
-test("company administrator writes only company info; super admin and sales retain previous permissions", () => {
+test("company administrator writes only company info; super admin stays unchanged and sales is read-only", () => {
   const access = new AccessService({} as any);
   for (const r of Object.keys(delegate)) {
     if (r !== "sales-companies")
@@ -31,7 +31,8 @@ test("company administrator writes only company info; super admin and sales reta
     access.allow({ ...actor, role: "SUPER_ADMIN" }, r, true);
   }
   access.allow(actor, "sales-companies", true);
-  access.allow({ ...actor, role: "SALES" }, "orders", true);
+  for (const r of Object.keys(delegate))
+    assert.throws(() => access.allow({ ...actor, role: "SALES" }, r, true));
   for (const r of ["settings", "fund-accounts", "expenses"])
     assert.throws(() => access.allow(actor, r));
   assert.deepEqual(
@@ -115,7 +116,7 @@ test("material uploads permit own company pictures only", async () => {
     await assert.rejects(s.validate(actor, data, {}), /无权/);
 });
 
-function fixture() {
+function fixture(employeeScope = false) {
   const employee = uuid(4),
     orderId = uuid(3);
   const records = [
@@ -141,6 +142,7 @@ function fixture() {
     order: {
       findMany: async ({ where }: any) => {
         assert.equal(where.salesCompanyId, actor.salesCompanyId);
+        if (employeeScope) assert.equal(where.salesUserId, employee);
         return [
           { id: orderId, orderNo: "O1", projectId: uuid(5), unitId: uuid(6) },
         ];
@@ -150,6 +152,7 @@ function fixture() {
       findMany: async ({ where }: any) => {
         assert.equal(where.salesCompanyId, actor.salesCompanyId);
         assert.deepEqual(where.orderId, { in: [orderId] });
+        if (employeeScope) assert.equal(where.salesUserId, employee);
         if (where.id) return records.filter((r) => r.id === where.id);
         assert.equal(where.currency, "HKD");
         assert.equal(where.dueOn.gte.toISOString().slice(0, 10), query.from);
@@ -206,7 +209,7 @@ test("company commission details reject foreign IDs, reject client-selected comp
     false,
   );
   await assert.rejects(service.detail(actor, uuid(99)), /不存在/);
-  for (const role of ["SALES", "FINANCE", "SUPER_ADMIN"])
+  for (const role of ["FINANCE", "SUPER_ADMIN"])
     await assert.rejects(service.list({ ...actor, role }, query), /无权/);
   await assert.rejects(
     service.list({ ...actor, salesCompanyId: null }, query),
@@ -215,4 +218,78 @@ test("company commission details reject foreign IDs, reject client-selected comp
   const detail = await service.detail(actor, uuid(10));
   assert.equal(detail.payments?.length, 1);
   assert.equal("fundAccountId" in detail, false);
+});
+
+test("employee commission scope is enforced for list, drilldown and detail", async () => {
+  const employeeActor = { ...actor, role: "SALES", id: uuid(4) };
+  const service = fixture(true);
+  const result = await service.list(employeeActor, query);
+  assert.equal(result.summary.amount, "200.20");
+  assert.ok(result.items.every((r) => r.salesUserId === employeeActor.id));
+  await assert.rejects(
+    service.list(employeeActor, { ...query, salesUserId: uuid(99) }),
+  );
+  assert.equal(
+    (await service.detail(employeeActor, uuid(10))).salesUserId,
+    employeeActor.id,
+  );
+  await assert.rejects(service.detail(employeeActor, uuid(99)));
+  const access = new AccessService({
+    order: {
+      findMany: async ({ where }: any) => {
+        assert.equal(where.salesUserId, employeeActor.id);
+        return [{ id: uuid(3) }];
+      },
+    },
+  } as any);
+  assert.deepEqual(await access.scope(employeeActor, "commissions"), {
+    orderId: { in: [uuid(3)] },
+    salesUserId: employeeActor.id,
+  });
+  assert.deepEqual(await access.scope(employeeActor, "users"), {
+    salesCompanyId: employeeActor.salesCompanyId,
+  });
+});
+
+test("operations has business and system writes without financial approval rights", () => {
+  const access = new AccessService({} as any);
+  const ops = { ...actor, role: "OPERATIONS" };
+  for (const r of [
+    "projects",
+    "units",
+    "orders",
+    "users",
+    "sales-companies",
+    "settings",
+    "fund-accounts",
+    "materials",
+  ])
+    access.allow(ops, r, true);
+  for (const r of ["incomes", "expenses", "commissions", "invoices"])
+    assert.throws(() => access.allow(ops, r, true));
+  assert.equal(capabilities(ops).finance, false);
+  assert.equal(capabilities(ops).manageOrders, true);
+});
+
+test("employees cannot register payments or upload business attachments", async () => {
+  const employeeActor = { ...actor, role: "SALES" };
+  const receipts = new ReceiptsService(
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+  await assert.rejects(receipts.receipt(employeeActor, uuid(3), {}));
+  await assert.rejects(receipts.batch(employeeActor, uuid(3), {}));
+  await assert.rejects(
+    receipts.undo(employeeActor, uuid(3), { reason: "test" }),
+  );
+  const materials: any = new MaterialsService({} as any, {} as any, {} as any);
+  await assert.rejects(
+    materials.validate(
+      employeeActor,
+      { salesCompanyId: actor.salesCompanyId, category: "PHOTO" },
+      {},
+    ),
+  );
 });

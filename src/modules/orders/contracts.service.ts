@@ -43,7 +43,7 @@ export class ContractsService {
   }
   async ensure(a: Actor, key: string) {
     const o = await this.access.get(a, "orders", key);
-    if (a.role === "SALES_COMPANY_ADMIN") {
+    if (["SALES_COMPANY_ADMIN", "SALES"].includes(a.role)) {
       const current = o.currentContractMaterialId
         ? await this.db.material.findFirst({
             where: {

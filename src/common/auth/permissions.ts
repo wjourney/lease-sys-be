@@ -33,14 +33,22 @@ export const readers: any = {
     "commissions",
     "invoices",
     "materials",
-    "settings",
-    "fund-accounts",
     "users",
+    "sales-companies",
   ],
 };
 export const writers: any = {
   SUPER_ADMIN: Object.keys(delegate),
-  OPERATIONS: ["projects", "units", "orders", "materials"],
+  OPERATIONS: [
+    "projects",
+    "units",
+    "orders",
+    "materials",
+    "users",
+    "sales-companies",
+    "settings",
+    "fund-accounts",
+  ],
   FINANCE: [
     "incomes",
     "expenses",
@@ -50,7 +58,7 @@ export const writers: any = {
     "materials",
   ],
   SALES_COMPANY_ADMIN: ["sales-companies"],
-  SALES: ["orders"],
+  SALES: [],
 };
 export const capabilities = (a: Actor) => ({
   read: readers[a.role] ?? [],

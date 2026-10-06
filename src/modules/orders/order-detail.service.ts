@@ -32,7 +32,11 @@ export class OrderDetailService {
         orderBy: { createdAt: "desc" },
       }),
       this.db.commission.findMany({
-        where: { orderId: order.id, deletedAt: null },
+        where: {
+          orderId: order.id,
+          deletedAt: null,
+          ...(a.role === "SALES" ? { salesUserId: a.id } : {}),
+        },
         orderBy: { createdAt: "asc" },
       }),
     ]);

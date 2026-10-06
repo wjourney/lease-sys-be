@@ -16,8 +16,7 @@ export class AccessService {
     this.allow(a, r);
     if (internal(a)) return {};
     const company = a.salesCompanyId ?? "00000000-0000-0000-0000-000000000000";
-    if (r === "users")
-      return a.role === "SALES" ? { id: a.id } : { salesCompanyId: company };
+    if (r === "users") return { salesCompanyId: company };
     if (r === "sales-companies") return { id: company };
     if (r === "projects") return { status: "ACTIVE" };
     if (r === "units")
@@ -44,7 +43,11 @@ export class AccessService {
     });
     const ids = orders.map((x) => x.id);
     if (r === "orders") return { id: { in: ids } };
-    if (r === "commissions") return { orderId: { in: ids } };
+    if (r === "commissions")
+      return {
+        orderId: { in: ids },
+        ...(a.role === "SALES" ? { salesUserId: a.id } : {}),
+      };
     const roots = await tx.income.findMany({
       where: {
         orderId: { in: ids },

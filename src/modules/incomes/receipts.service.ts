@@ -20,7 +20,7 @@ export class ReceiptsService {
     readonly accounts: AccountValidationService,
   ) {}
   async receipt(a: Actor, key: string, body: any) {
-    demand(["SUPER_ADMIN", "FINANCE", "OPERATIONS", "SALES"].includes(a.role));
+    demand(["SUPER_ADMIN", "FINANCE", "OPERATIONS"].includes(a.role));
     const d = ReceiptInput.parse(body);
     return this.db.$transaction(async (tx) => {
       const first = await this.access.get(a, "incomes", key, tx);
@@ -104,7 +104,7 @@ export class ReceiptsService {
     return child;
   }
   async batch(a: Actor, orderId: string, body: any) {
-    demand(a.role !== "SALES_COMPANY_ADMIN");
+    demand(!["SALES_COMPANY_ADMIN", "SALES"].includes(a.role));
     const d = ReceiptInput.omit({ amount: true })
       .extend({
         allocations: z
@@ -219,7 +219,7 @@ export class ReceiptsService {
       .object({ reason: z.string().trim().min(1).max(500) })
       .strict()
       .parse(body);
-    demand(a.role !== "SALES_COMPANY_ADMIN");
+    demand(!["SALES_COMPANY_ADMIN", "SALES"].includes(a.role));
     if (reverse) demand(financial(a));
     return this.db.$transaction(async (tx) => {
       const first = await this.access.get(a, "incomes", key, tx);

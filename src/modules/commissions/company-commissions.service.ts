@@ -46,7 +46,9 @@ export function commissionTotals(rows: any[]) {
 export class CompanyCommissionsService {
   constructor(@Inject(PrismaService) readonly db: PrismaService) {}
   private allowed(a: Actor) {
-    demand(a.role === "SALES_COMPANY_ADMIN" && !!a.salesCompanyId);
+    demand(
+      ["SALES_COMPANY_ADMIN", "SALES"].includes(a.role) && !!a.salesCompanyId,
+    );
   }
   private async snapshot(
     a: Actor,
@@ -57,7 +59,11 @@ export class CompanyCommissionsService {
     return this.db.$transaction(
       async (tx) => {
         const orders = await tx.order.findMany({
-          where: { salesCompanyId: a.salesCompanyId!, deletedAt: null },
+          where: {
+            salesCompanyId: a.salesCompanyId!,
+            deletedAt: null,
+            ...(a.role === "SALES" ? { salesUserId: a.id } : {}),
+          },
           select: { id: true, orderNo: true, projectId: true, unitId: true },
         });
         const records = await tx.commission.findMany({
@@ -73,6 +79,7 @@ export class CompanyCommissionsService {
                   ...(q!.salesUserId ? { salesUserId: q!.salesUserId } : {}),
                   ...(q!.mode ? { mode: q!.mode } : {}),
                 }),
+            ...(a.role === "SALES" ? { salesUserId: a.id } : {}),
           },
           orderBy: [{ dueOn: "desc" }, { commissionNo: "desc" }],
         });
@@ -80,12 +87,15 @@ export class CompanyCommissionsService {
           throw new NotFoundException("记录不存在或无访问权限");
         const [users, projects, units, payments] = await Promise.all([
           tx.user.findMany({
-            where: {
-              OR: [
-                { salesCompanyId: a.salesCompanyId! },
-                { id: { in: records.map((c) => c.salesUserId) } },
-              ],
-            },
+            where:
+              a.role === "SALES"
+                ? { id: a.id, salesCompanyId: a.salesCompanyId! }
+                : {
+                    OR: [
+                      { salesCompanyId: a.salesCompanyId! },
+                      { id: { in: records.map((c) => c.salesUserId) } },
+                    ],
+                  },
             select: { id: true, name: true },
           }),
           tx.project.findMany({
@@ -177,6 +187,10 @@ export class CompanyCommissionsService {
   async list(a: Actor, input: unknown) {
     this.allowed(a);
     const q = CompanyCommissionQuery.parse(input);
+    if (a.role === "SALES") {
+      demand(!q.salesUserId || q.salesUserId === a.id, "只能查看本人的佣金");
+      q.salesUserId = a.id;
+    }
     const { items, employees } = await this.snapshot(a, q);
     const rows = items.filter(
       (r) =>

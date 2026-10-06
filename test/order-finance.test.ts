@@ -171,7 +171,12 @@ const admin: any = {
   salesCompanyId: null,
   authVersion: 1,
 };
-const sales: any = { ...admin, id: randomUUID(), name: "Sales", role: "SALES" };
+const operations: any = {
+  ...admin,
+  id: randomUUID(),
+  name: "Operations",
+  role: "OPERATIONS",
+};
 const accountId = randomUUID();
 function matches(row: any, where: any): boolean {
   return Object.entries(where ?? {}).every(([key, value]: any) => {
@@ -397,12 +402,12 @@ test("initial overpayment rolls back all allocations", async () => {
 test("batch retry is idempotent and rejects a changed allocation set", async () => {
   const f = fixture();
   const body = f.batch();
-  const first = await f.receipts.batch(sales, f.order.id, body);
-  const retry = await f.receipts.batch(sales, f.order.id, body);
+  const first = await f.receipts.batch(operations, f.order.id, body);
+  const retry = await f.receipts.batch(operations, f.order.id, body);
   assert.equal(first.id, retry.id);
   assert.equal(f.tables.income.length, 4);
   await assert.rejects(
-    f.receipts.batch(sales, f.order.id, {
+    f.receipts.batch(operations, f.order.id, {
       ...body,
       allocations: [body.allocations[0]],
     }),
@@ -411,7 +416,7 @@ test("batch retry is idempotent and rejects a changed allocation set", async () 
 test("partial pending payment reserves only available balance, not confirmed money", async () => {
   const f = fixture();
   const bill = f.tables.income[0];
-  const r = await f.receipts.receipt(sales, bill.id, {
+  const r = await f.receipts.receipt(operations, bill.id, {
     ...f.payment,
     amount: "60",
   });
@@ -425,7 +430,7 @@ test("partial pending payment reserves only available balance, not confirmed mon
 });
 test("only full confirmed first payment activates order; confirmation retry creates no duplicate invoice", async () => {
   const f = fixture();
-  const result = await f.receipts.batch(sales, f.order.id, f.batch());
+  const result = await f.receipts.batch(operations, f.order.id, f.batch());
   await f.receipts.confirm(admin, result.receipts[0].id, true);
   assert.equal(f.tables.order[0].status, "PENDING");
   await f.receipts.confirm(admin, result.receipts[1].id, true);
@@ -436,16 +441,16 @@ test("only full confirmed first payment activates order; confirmation retry crea
 });
 test("withdrawal requires creator or finance, then releases pending reservation", async () => {
   const f = fixture();
-  const r = await f.receipts.receipt(sales, f.tables.income[0].id, {
+  const r = await f.receipts.receipt(operations, f.tables.income[0].id, {
     ...f.payment,
     amount: "50",
   });
   await assert.rejects(
-    f.receipts.undo({ ...sales, id: randomUUID() }, r.id, {
+    f.receipts.undo({ ...operations, id: randomUUID() }, r.id, {
       reason: "withdraw",
     }),
   );
-  await f.receipts.undo(sales, r.id, { reason: "填错金额" });
+  await f.receipts.undo(operations, r.id, { reason: "填错金额" });
   assert.equal(f.tables.income.find((x) => x.id === r.id).status, "WITHDRAWN");
   assert.equal(
     (await f.balances.totals(f.db, r.parentId)).available.toString(),
@@ -454,11 +459,11 @@ test("withdrawal requires creator or finance, then releases pending reservation"
 });
 test("reversal preserves receipt and voids invoice; does not release occupied unit", async () => {
   const f = fixture();
-  const result = await f.receipts.batch(sales, f.order.id, f.batch());
+  const result = await f.receipts.batch(operations, f.order.id, f.batch());
   for (const r of result.receipts) await f.receipts.confirm(admin, r.id, true);
   f.tables.order[0].occupancyState = "OCCUPIED";
   await assert.rejects(
-    f.receipts.undo(sales, result.id, { reason: "错账" }, true),
+    f.receipts.undo(operations, result.id, { reason: "错账" }, true),
   );
   await f.receipts.undo(admin, result.id, { reason: "错账" }, true);
   assert.equal(
@@ -474,7 +479,7 @@ test("reversal preserves receipt and voids invoice; does not release occupied un
 });
 test("settlement or downstream payment blocks reversal", async () => {
   const f = fixture();
-  const r = await f.receipts.receipt(sales, f.tables.income[0].id, {
+  const r = await f.receipts.receipt(operations, f.tables.income[0].id, {
     ...f.payment,
     amount: "100",
   });
@@ -489,7 +494,7 @@ test("settlement or downstream payment blocks reversal", async () => {
 });
 test("all rejected receipts unlock lease editing and cancellation despite historical registration", async () => {
   const f = fixture();
-  const result = await f.receipts.batch(sales, f.order.id, f.batch());
+  const result = await f.receipts.batch(operations, f.order.id, f.batch());
   for (const r of result.receipts)
     await f.receipts.confirm(admin, r.id, false, "重录");
   const details = new OrderDetailService(f.db, f.access, {} as any);

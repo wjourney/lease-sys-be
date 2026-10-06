@@ -34,7 +34,7 @@ export class UsersService extends ResourceService {
     return `Sb${randomBytes(9).toString("base64url")}`;
   }
   private assertCanDisable(a: Actor, row: any) {
-    demand(a.role === "SUPER_ADMIN", "只有超级管理员可以停用账号");
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role), "无权停用账号");
     if (row.id === a.id) fail("不能停用自己的账号");
   }
   async uploadAvatar(a: Actor, key: string, file?: Express.Multer.File) {

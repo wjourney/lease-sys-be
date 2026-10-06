@@ -46,6 +46,7 @@ export class MaterialsService extends ResourceService {
     if (keys.length !== 1) fail("文件资料必须且只能选择一个业务归属");
     await this.access.get(a, ownerMap[keys[0]], data[keys[0]], tx);
     if (!internal(a)) {
+      demand(a.role !== "SALES");
       const k = keys[0];
       if (a.role === "SALES_COMPANY_ADMIN") {
         demand(
