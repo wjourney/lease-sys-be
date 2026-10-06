@@ -15,6 +15,7 @@ import { date, money } from "../../common/validation/fields";
 import { PrismaService } from "../../database/prisma.service";
 import { RentBillingService } from "../incomes/rent-billing.service";
 import { OrdersSchema } from "./dto/orders.schema";
+import { defaultInitialAccount } from "../fund-accounts/default-platform-account";
 
 function validateOrderDetails(d: any) {
   if (
@@ -221,6 +222,7 @@ export class OrderLifecycleService {
     validateOrderDetails(d);
     return this.db.$transaction(
       async (tx) => {
+        await defaultInitialAccount(tx, orderData.initialPayment);
         await lock(tx, "units", d.unitId);
         const u = await this.access.get(a, "units", d.unitId, tx);
         if (!u.enabled) fail("单位已停用");
@@ -385,6 +387,7 @@ export class OrderLifecycleService {
       if (o.revision !== revision)
         throw new ConflictException("订单已更新，请刷新");
       if (o.status === "CLOSED") fail("已关闭订单不能修改");
+      await defaultInitialAccount(tx, changes.initialPayment, o.currency);
       if (!commission) {
         const existing = await tx.commission.findMany({
           where: { orderId: key, deletedAt: null, status: { not: "VOID" } },

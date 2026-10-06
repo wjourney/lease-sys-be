@@ -78,6 +78,25 @@ before(async () => {
   account = (await finance.call("GET", "/fund-accounts")).items[0];
 });
 test("full workflow and authorization invariants", async (t) => {
+  await t.test("order bill read model is paged, scoped and searchable by order number", async () => {
+    const q = `/incomes/bills?q=${encodeURIComponent(order.orderNo)}&pageSize=1`;
+    const first = await sales.call("GET", q);
+    assert.ok(first.total >= 2);
+    assert.equal(first.items.length, 1);
+    assert.equal(first.items[0].orderId, order.id);
+    assert.ok(Number(first.summary.rental.total) > 0);
+    assert.ok(Number(first.summary.deposit.total) > 0);
+    const second = await sales.call("GET", q + "&page=2");
+    assert.deepEqual(second.summary, first.summary);
+    assert.notEqual(second.items[0].id, first.items[0].id);
+    assert.equal((await other.call("GET", q)).total, 0);
+    const detail = await sales.call("GET", `/incomes/${first.items[0].id}`);
+    assert.ok(Array.isArray(detail.receipts));
+    assert.ok(Array.isArray(detail.offsets));
+    assert.ok(Array.isArray(detail.operations));
+    await sales.call("GET", "/incomes/bills?from=2026-02-30", undefined, 400);
+    assert.equal((await sales.call("GET", "/incomes/bills?currency=USD")).total, 0);
+  });
   await t.test("five roles and company scopes", async () => {
     assert.equal((await admin.call("GET", "/users")).total, 6);
     const mine = await sales.call("GET", "/orders");

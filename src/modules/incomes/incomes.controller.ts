@@ -12,6 +12,7 @@ import {
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { IncomesService } from "./incomes.service";
 import { ReceiptsService } from "./receipts.service";
+import { listOrderBills } from "./bill-list";
 @ApiTags("incomes")
 @Controller("incomes")
 export class IncomesController {
@@ -19,6 +20,9 @@ export class IncomesController {
     @Inject(IncomesService) private service: IncomesService,
     @Inject(ReceiptsService) private receiptsService: ReceiptsService,
   ) {}
+  @Get("bills") bills(@Req() r: any, @Query() q: any) {
+    return listOrderBills(this.service.db, this.service.access, r.actor, q);
+  }
   @Get(":id/receipts") receipts(
     @Req() r: any,
     @Param("id") key: string,

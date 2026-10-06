@@ -43,6 +43,21 @@ export class ContractsService {
   }
   async ensure(a: Actor, key: string) {
     const o = await this.access.get(a, "orders", key);
+    if (a.role === "SALES_COMPANY_ADMIN") {
+      const current = o.currentContractMaterialId
+        ? await this.db.material.findFirst({
+            where: {
+              id: o.currentContractMaterialId,
+              orderId: key,
+              deletedAt: null,
+              isCurrent: true,
+              category: "CONTRACT",
+            },
+          })
+        : null;
+      if (!current?.storageKey) return fail("合同尚未生成，请联系平台管理员");
+      return current;
+    }
     if (o.currentContractMaterialId) {
       const current = await this.db.material.findFirst({
         where: {

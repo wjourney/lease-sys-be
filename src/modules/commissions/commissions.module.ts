@@ -5,10 +5,16 @@ import { CommissionLedgerModule } from "./commission-ledger.module";
 import { CommissionPaymentsService } from "./commission-payments.service";
 import { CommissionsController } from "./commissions.controller";
 import { CommissionsService } from "./commissions.service";
+import { CompanyCommissionsController } from "./company-commissions.controller";
+import { CompanyCommissionsService } from "./company-commissions.service";
 @Module({
   imports: [CommonModule, FundAccountsModule, CommissionLedgerModule],
-  controllers: [CommissionsController],
-  providers: [CommissionsService, CommissionPaymentsService],
+  controllers: [CommissionsController, CompanyCommissionsController],
+  providers: [
+    CommissionsService,
+    CommissionPaymentsService,
+    CompanyCommissionsService,
+  ],
   exports: [CommissionsService, CommissionPaymentsService],
 })
 export class CommissionsModule {}

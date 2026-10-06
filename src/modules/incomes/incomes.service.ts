@@ -7,11 +7,29 @@ import { number, plain } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
 import { IncomesSchema } from "./dto/incomes.schema";
 import { IncomeBalanceService } from "./income-balance.service";
+import { billAmounts } from "./bill-query";
 @Injectable()
 export class IncomesService extends ResourceService {
   readonly resource = "incomes";
   protected schema = IncomesSchema;
   protected prefix: [string, string] = ["recordNo", "B"];
+  protected async listConditions(a: Actor, q: any) {
+    const conditions: any[] = [];
+    if (q.currency) {
+      if (!/^[A-Z]{3}$/.test(q.currency)) fail("币种无效");
+      conditions.push({ currency: q.currency });
+    }
+    if (q.orderOnly === "true") {
+      const orders = await this.db.order.findMany({
+        where: {
+          AND: [{ deletedAt: null }, await this.access.scope(a, "orders")],
+        },
+        select: { id: true },
+      });
+      conditions.push({ orderId: { in: orders.map((o) => o.id) } });
+    }
+    return conditions;
+  }
   constructor(
     @Inject(PrismaService)
     db: PrismaService,
@@ -45,6 +63,44 @@ export class IncomesService extends ResourceService {
   }
   async detail(a: Actor, key: string) {
     const result = await super.detail(a, key);
+    if (result.recordType === "RECEIVABLE") {
+      const children = await this.db.income.findMany({
+        where: { parentId: key, recordType: "RECEIPT", deletedAt: null },
+        orderBy: { createdAt: "desc" },
+      });
+      const receipts = await Promise.all(
+        children.map((r) => this.enrich(a, r)),
+      );
+      const operations = [
+        ...result.operations,
+        ...children.flatMap((r: any) =>
+          this.visibleOperations(a, r).map((log: any) => ({
+            ...log,
+            subject: r.recordNo,
+          })),
+        ),
+      ].sort((a: any, b: any) => b.operatedAt.localeCompare(a.operatedAt));
+      const offsets = result.operations
+        .filter(
+          (log: any) =>
+            log.changes?.depositOffsetAmount &&
+            number(log.changes.depositOffsetAmount.after ?? 0).gt(
+              log.changes.depositOffsetAmount.before ?? 0,
+            ),
+        )
+        .map((log: any) => ({
+          id: log.eventId,
+          date: log.operatedAt,
+          actorName: log.actorName,
+          reason: log.reason,
+          amount: number(log.changes.depositOffsetAmount.after)
+            .sub(log.changes.depositOffsetAmount.before ?? 0)
+            .toFixed(2),
+          orderId: result.orderId,
+          orderNo: result.orderNo,
+        }));
+      return { ...result, receipts, offsets, operations };
+    }
     if (result.recordType !== "RECEIPT") return result;
     const group = result.recurrenceRule?.receiptGroupId;
     const members = group
@@ -105,12 +161,16 @@ export class IncomesService extends ResourceService {
     }
     const t = await this.balances.totals(this.db, row.id);
     Object.assign(x, plain(t));
-    x.overdue =
-      row.status !== "VOID" &&
-      t.remaining.gt(0) &&
-      !!row.dueOn &&
-      row.dueOn.toISOString().slice(0, 10) <
-        new Date().toISOString().slice(0, 10);
+    Object.assign(x, billAmounts(row, t));
+    const order = row.orderId
+      ? await this.db.order.findUnique({ where: { id: row.orderId } })
+      : null;
+    x.canRegister =
+      !!order &&
+      order.status !== "CLOSED" &&
+      x.status !== "VOID" &&
+      t.available.gt(0) &&
+      !(row.feeType === "DEPOSIT" && order.depositSettledAt);
     return x;
   }
 }

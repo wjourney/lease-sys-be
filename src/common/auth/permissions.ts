@@ -24,8 +24,6 @@ export const readers: any = {
     "materials",
     "users",
     "sales-companies",
-    "settings",
-    "fund-accounts",
   ],
   SALES: [
     "projects",
@@ -51,7 +49,7 @@ export const writers: any = {
     "fund-accounts",
     "materials",
   ],
-  SALES_COMPANY_ADMIN: ["users", "orders"],
+  SALES_COMPANY_ADMIN: ["sales-companies"],
   SALES: ["orders"],
 };
 export const capabilities = (a: Actor) => ({
