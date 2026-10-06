@@ -36,6 +36,7 @@ export class ExpensesService extends ResourceService {
   protected async beforeEdit(a: Actor, d: any, tx: any, row: any) {
     if (
       row.status !== "UNPAID" ||
+      number(row.paidAmount).gt(0) ||
       row.commissionId ||
       ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
@@ -44,9 +45,42 @@ export class ExpensesService extends ResourceService {
   protected async beforeRemove(a: Actor, tx: any, row: any) {
     if (
       row.status === "PAID" ||
+      number(row.paidAmount).gt(0) ||
       row.commissionId ||
       ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动产生的支出不能删除");
+  }
+  async enrich(a: Actor, row: any) {
+    const result = await super.enrich(a, row);
+    const records =
+      Array.isArray(row.paymentRecords) && row.paymentRecords.length
+        ? row.paymentRecords
+        : number(row.paidAmount).gt(0)
+          ? [
+              {
+                amount: row.paidAmount,
+                paidOn: row.paidOn,
+                fundAccountId: row.fundAccountId,
+                paymentMethod: row.paymentMethod,
+                bankReference: row.bankReference,
+              },
+            ]
+          : [];
+    const accounts = await this.db.fundAccount.findMany({
+      where: {
+        id: { in: records.map((r: any) => r.fundAccountId).filter(Boolean) },
+      },
+      select: { id: true, name: true },
+    });
+    const names = new Map(accounts.map((x) => [x.id, x.name]));
+    return {
+      ...result,
+      remainingAmount: number(row.amount).sub(row.paidAmount).toString(),
+      paymentRecords: records.map((p: any) => ({
+        ...p,
+        accountName: names.get(p.fundAccountId) || "—",
+      })),
+    };
   }
 }

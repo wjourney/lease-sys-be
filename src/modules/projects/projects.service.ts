@@ -9,6 +9,8 @@ import { PrismaService } from "../../database/prisma.service";
 import { ProjectsSchema } from "./dto/projects.schema";
 import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
+import { number } from "../../common/utils/value";
+import { projectUnitTypes } from "./project-unit-types";
 @Injectable()
 export class ProjectsService extends ResourceService {
   readonly resource = "projects";
@@ -26,15 +28,36 @@ export class ProjectsService extends ResourceService {
     super(db, access);
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
-    if (data.typeConfigs) {
-      const s = await tx.systemSetting.findUnique({
-        where: {
-          key: "unit_types",
-        },
-      });
-      const codes = (s?.value as any[])?.map((x) => x.code) ?? [];
-      for (const v of data.typeConfigs)
-        if (!codes.includes(v.code)) fail("项目引用了无效单位类型");
+    if (!row && !data.typeConfigs?.length) fail("请至少配置一种项目单位类型");
+    if (data.typeConfigs !== undefined) {
+      if (!data.typeConfigs.length) fail("请至少配置一种项目单位类型");
+      const codes = data.typeConfigs.map((v: any) => v.code);
+      const names = data.typeConfigs.map((v: any) => v.name?.trim());
+      if (
+        new Set(codes).size !== codes.length ||
+        new Set(names).size !== names.length
+      )
+        fail("项目单位类型名称或编码重复");
+      for (const v of data.typeConfigs) {
+        if (
+          !v.name?.trim() ||
+          [v.minArea, v.maxArea, v.minRent, v.maxRent].some((x) => x == null)
+        )
+          fail("请填写类型名称、面积范围和月租范围");
+        if (
+          number(v.minArea).lte(0) ||
+          number(v.minArea).gt(v.maxArea) ||
+          number(v.minRent).gt(v.maxRent)
+        )
+          fail("请检查单位类型的面积和月租范围");
+      }
+      if (
+        row &&
+        (await tx.unit.count({
+          where: { projectId: row.id, unitTypeCode: { notIn: codes } },
+        }))
+      )
+        fail("已有单位使用的类型不能删除，请保留类型");
     }
   }
   async orderLogos(a: Actor, projectId: string, body: any) {
@@ -75,6 +98,7 @@ export class ProjectsService extends ResourceService {
   }
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);
+    x.typeConfigs = await projectUnitTypes(this.db, row);
     const units = await this.db.unit.findMany({
       where: {
         projectId: row.id,
@@ -134,7 +158,10 @@ export class ProjectsService extends ResourceService {
       }));
     x.coverUrl = image
       ? await this.storage.previewUrl(
-          { storageProvider: image.storageProvider, storageKey: image.storageKey! },
+          {
+            storageProvider: image.storageProvider,
+            storageKey: image.storageKey!,
+          },
           `/api/v1/materials/${image.id}/download`,
         )
       : null;

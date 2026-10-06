@@ -1,3 +1,4 @@
+import { IncomesModule } from "../incomes/incomes.module";
 import { OrderDetailService } from "./order-detail.service";
 import { Module } from "@nestjs/common";
 import { CommonModule } from "../../common/common.module";
@@ -9,7 +10,7 @@ import { OrderLifecycleService } from "./order-lifecycle.service";
 import { OrdersController } from "./orders.controller";
 import { OrdersService } from "./orders.service";
 @Module({
-  imports: [CommonModule, BillingModule, StorageModule],
+  imports: [CommonModule, BillingModule, StorageModule, IncomesModule],
   controllers: [OrdersController],
   providers: [
     OrderDetailService,

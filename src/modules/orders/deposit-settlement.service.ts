@@ -146,6 +146,24 @@ export class DepositSettlementService {
             `押金抵扣：${d.reason}`,
           );
         }
+        // End the uncollected deposit obligation as part of explicit settlement.
+        // The original contracted deposit stays on the order and in the audit trail.
+        for (const bill of roots) {
+          const paid = receipts
+            .filter((r) => r.parentId === bill.id)
+            .reduce((n, r) => n.add(r.amount), number(0));
+          await update(
+            tx,
+            "incomes",
+            bill,
+            {
+              adjustmentAmount: paid.sub(bill.amount),
+              status: paid.gt(0) ? "PAID" : "VOID",
+            },
+            a,
+            `退租押金结算，终止未收押金：${d.reason}`,
+          );
+        }
         const refund = received.sub(d.deductionAmount);
         if (refund.gt(0))
           await insert(

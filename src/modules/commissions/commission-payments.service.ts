@@ -41,7 +41,11 @@ export class CommissionPaymentsService {
       if (existing) {
         if (
           existing.commissionId !== key ||
-          !number(existing.amount).eq(d.amount)
+          !number(existing.amount).eq(d.amount) ||
+          existing.fundAccountId !== d.fundAccountId ||
+          existing.paymentMethod !== d.paymentMethod ||
+          existing.paidOn?.getTime() !== d.paidOn.getTime() ||
+          (existing.bankReference || "") !== (d.bankReference || "")
         )
           fail("重复提交编号冲突");
         return existing;

@@ -1,3 +1,4 @@
+import { orderSettlement } from "./order-settlement";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
@@ -52,7 +53,10 @@ export class OrderDetailService {
       return {
         ...plain(root),
         operationLogs: undefined,
-        receipts: children.map(({ operationLogs, ...r }) => plain(r)),
+        receipts: children.map(({ operationLogs, ...r }) => ({
+          ...plain(r),
+          voucherIncomeId: (r.recurrenceRule as any)?.voucherIncomeId || r.id,
+        })),
         total: total.toFixed(2),
         confirmed: confirmed.toFixed(2),
         pending: pending.toFixed(2),
@@ -102,7 +106,7 @@ export class OrderDetailService {
           ? "PARTIAL"
           : "UNPAID";
     const hasPayments =
-      !!order.firstPaymentRegisteredAt ||
+      order.occupancyState === "OCCUPIED" ||
       receipts.some((x) => ["PENDING", "CONFIRMED"].includes(x.status));
     const materials = rights.read.includes("materials")
       ? await this.db.material.findMany({
@@ -151,49 +155,50 @@ export class OrderDetailService {
           })()
         : null,
       commissions: await Promise.all(
-        (rights.read.includes("commissions") ? commissions : []).map(
-          async (c) => {
-            const related = await this.db.expense.findMany({
-              where: {
-                commissionId: c.id,
-                deletedAt: null,
-                status: { not: "VOID" },
-              },
-            });
-            const paid = sum(related, "paidAmount"),
-              committed = sum(related, "amount");
-            const [company, sales] = await Promise.all([
-              this.db.salesCompany.findUnique({
-                where: { id: c.salesCompanyId },
-              }),
-              c.salesUserId
-                ? this.db.user.findUnique({ where: { id: c.salesUserId } })
-                : null,
-            ]);
-            return {
-              ...(await this.access.output(a, "commissions", c)),
-              companyName: company?.name,
-              salesName: sales?.name,
-              paidAmount: paid.toFixed(2),
-              status:
-                c.status === "VOID"
-                  ? "VOID"
-                  : c.amount == null
-                    ? "UNSET"
-                    : paid.eq(c.amount)
-                      ? "PAID"
-                      : paid.gt(0)
-                        ? "PARTIAL"
-                        : "OPEN",
-              remainingAmount:
-                c.amount == null ? null : number(c.amount).sub(paid).toFixed(2),
-              availableAmount:
-                c.amount == null
-                  ? null
-                  : number(c.amount).sub(committed).toFixed(2),
-            };
-          },
-        ),
+        (rights.read.includes("commissions") || rights.manageOrders
+          ? commissions
+          : []
+        ).map(async (c) => {
+          const related = await this.db.expense.findMany({
+            where: {
+              commissionId: c.id,
+              deletedAt: null,
+              status: { not: "VOID" },
+            },
+          });
+          const paid = sum(related, "paidAmount"),
+            committed = sum(related, "amount");
+          const [company, sales] = await Promise.all([
+            this.db.salesCompany.findUnique({
+              where: { id: c.salesCompanyId },
+            }),
+            c.salesUserId
+              ? this.db.user.findUnique({ where: { id: c.salesUserId } })
+              : null,
+          ]);
+          return {
+            ...(await this.access.output(a, "commissions", c)),
+            companyName: company?.name,
+            salesName: sales?.name,
+            paidAmount: paid.toFixed(2),
+            status:
+              c.status === "VOID"
+                ? "VOID"
+                : c.amount == null
+                  ? "UNSET"
+                  : paid.eq(c.amount)
+                    ? "PAID"
+                    : paid.gt(0)
+                      ? "PARTIAL"
+                      : "OPEN",
+            remainingAmount:
+              c.amount == null ? null : number(c.amount).sub(paid).toFixed(2),
+            availableAmount:
+              c.amount == null
+                ? null
+                : number(c.amount).sub(committed).toFixed(2),
+          };
+        }),
       ),
       deposit: {
         state: depositState,
@@ -209,6 +214,13 @@ export class OrderDetailService {
           : [],
       },
       firstPaymentStatus: firstState,
+      settlement: orderSettlement(
+        order,
+        roots,
+        receipts,
+        expenses,
+        commissions,
+      ),
       actions: {
         edit: rights.write.includes("orders") && order.status !== "CLOSED",
         editLease:
@@ -219,6 +231,10 @@ export class OrderDetailService {
           rights.write.includes("orders") &&
           order.status === "PENDING" &&
           !hasPayments,
+        moveIn:
+          rights.manageOrders &&
+          order.status === "ACTIVE" &&
+          order.occupancyState === "LOCKED",
         terminate: rights.manageOrders && order.status === "ACTIVE",
         handover:
           rights.manageOrders &&
@@ -256,7 +272,9 @@ export class OrderDetailService {
         ...roots,
         ...receipts,
         ...(rights.read.includes("expenses") ? expenses : []),
-        ...(rights.read.includes("commissions") ? commissions : []),
+        ...(rights.read.includes("commissions") || rights.manageOrders
+          ? commissions
+          : []),
       ].flatMap((r: any) =>
         (r.operationLogs ?? []).map((log: any) => ({
           ...log,

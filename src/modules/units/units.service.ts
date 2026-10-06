@@ -8,6 +8,8 @@ import { PrismaService } from "../../database/prisma.service";
 import { UnitsSchema } from "./dto/units.schema";
 import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
+import { projectUnitTypes } from "../projects/project-unit-types";
+import { lock } from "../../common/database/record-mutations";
 @Injectable()
 export class UnitsService extends ResourceService {
   readonly resource = "units";
@@ -28,20 +30,11 @@ export class UnitsService extends ResourceService {
       ...row,
       ...data,
     };
-    await this.access.get(a, "projects", d.projectId, tx);
-    const s = await tx.systemSetting.findUnique({
-      where: {
-        key: "unit_types",
-      },
-    });
-    if (
-      !(s?.value as any[])?.some(
-        (x) =>
-          x.code === d.unitTypeCode &&
-          (x.enabled || row?.unitTypeCode === x.code),
-      )
-    )
-      fail("请选择有效单位类型");
+    await lock(tx, "projects", d.projectId);
+    const project = await this.access.get(a, "projects", d.projectId, tx);
+    const types = await projectUnitTypes(tx, project);
+    if (!types.some((x) => x.code === d.unitTypeCode))
+      fail("请选择所属项目的单位类型");
     if (number(d.area).lte(0)) fail("实用面积必须大于 0");
     if (number(d.minRent).gt(d.maxRent)) fail("最低价不得高于最高价");
     if (
@@ -54,15 +47,13 @@ export class UnitsService extends ResourceService {
   }
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);
-    const dictionary = await this.db.systemSetting.findUnique({
-      where: {
-        key: "unit_types",
-      },
+    const project = await this.db.project.findUnique({
+      where: { id: row.projectId },
     });
+    const types = project ? await projectUnitTypes(this.db, project) : [];
     x.unitTypeName =
-      (dictionary?.value as any[])?.find(
-        (item) => item.code === row.unitTypeCode,
-      )?.name ?? row.unitTypeCode;
+      types.find((item) => item.code === row.unitTypeCode)?.name ??
+      row.unitTypeCode;
     const o = await this.db.order.findFirst({
       where: {
         unitId: row.id,

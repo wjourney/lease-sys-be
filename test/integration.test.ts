@@ -394,26 +394,26 @@ test("full workflow and authorization invariants", async (t) => {
     await other.call("GET", "/invoices/" + invoice.id, undefined, 404);
   });
   await t.test(
-    "financial records cannot be erased with generic delete or patch",
+    "income records cannot be patched or adjusted through public endpoints",
     async () => {
       await admin.call(
         "DELETE",
         "/incomes/" + receipt.id,
         { reason: "test" },
-        400,
+        404,
       );
       const d = await admin.call("GET", "/incomes/" + root.id);
       await admin.call(
         "PATCH",
         "/incomes/" + root.id,
         { revision: d.revision, amount: "1" },
-        400,
+        404,
       );
       await finance.call(
         "POST",
         "/incomes/" + root.id + "/adjust",
         { revision: d.revision, amount: "10", reason: "test" },
-        400,
+        404,
       );
     },
   );
@@ -662,6 +662,7 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "测试项目-" + randomUUID().slice(0, 5),
+          typeConfigs: [{ code: "LARGE", name: "大单位", minArea: "30", maxArea: "80", minRent: "1000", maxRent: "20000" }],
           region: "九龙",
           address: "测试地址",
           propertyName: "测试物业",
@@ -718,7 +719,7 @@ test("full workflow and authorization invariants", async (t) => {
           endsOn: "2027-09-30",
           monthlyRent: "5800",
           depositAmount: "11600",
-          commission: { amount: "200" },
+          commission: { mode: "ONE_TIME", dueOn: "2026-10-10", amount: "200" },
         },
         409,
       );
@@ -736,6 +737,7 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "Logo 编辑测试-" + randomUUID().slice(0, 5),
+          typeConfigs: [{ code: "LARGE", name: "大单位", minArea: "30", maxArea: "80", minRent: "1000", maxRent: "20000" }],
           region: "港岛",
           address: "测试地址",
           completionDate: "2023-01-01",
@@ -993,6 +995,8 @@ test("full workflow and authorization invariants", async (t) => {
         depositReceived: "0",
         dueOn: "2026-10-28",
         receivedOn: "2026-10-28",
+        fundAccountId: account.id,
+        paymentMethod: "BANK",
       },
     };
     await admin.call("POST", "/orders", {
@@ -1041,7 +1045,15 @@ test("full workflow and authorization invariants", async (t) => {
     assert.match(contract.headers.get("content-disposition") ?? "", /^attachment;/);
     assert.equal(Buffer.from(await contract.arrayBuffer()).subarray(0, 4).toString(), "%PDF");
     await other.call("POST", `/orders/${created.id}/contract/ensure`, undefined, 404);
-    const detail = await admin.call("GET", `/orders/${created.id}`);
+    let detail = await admin.call("GET", `/orders/${created.id}`);
+    assert.equal(detail.actions.editLease,false);
+    assert.equal(detail.occupancyState,"LOCKED");
+    const initialReceipts=detail.bills.flatMap((b:any)=>b.receipts);
+    assert.equal(initialReceipts.length,1);
+    for(const r of initialReceipts) await finance.call("POST",`/incomes/${r.id}/reject`,{reason:"金额需重新登记"},201);
+    detail=await admin.call("GET",`/orders/${created.id}`);
+    assert.equal(detail.actions.editLease,true);
+    assert.equal(detail.actions.close,true);
     assert.equal(detail.registrationNoType, "BR");
     assert.equal(detail.depositPlan, "TWO_ONE");
     assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
@@ -1075,6 +1087,8 @@ test("full workflow and authorization invariants", async (t) => {
         depositReceived: "11600",
         dueOn: "2026-10-28",
         receivedOn: "2026-10-28",
+        fundAccountId: account.id,
+        paymentMethod: "BANK",
       },
       commission: { ...body.commission, amount: "250" },
     });
@@ -1168,6 +1182,17 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(installments[0].mode, "ONE_TIME");
     assert.equal(installments[0].periodEnd.slice(0, 10), "2027-02-28");
     assert.equal(installments[0].dueOn.slice(0, 10), "2026-12-01");
+    const archivedIds = detail.commissions.filter((c: any) => c.status === "VOID").map((c: any) => c.id);
+    await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision,
+      reason: "恢复月结但保留历史",
+      commission: { mode: "RECURRING_MONTHLY", dueOn: "2026-11-05", amount: "100" },
+    });
+    detail = await admin.call("GET", `/orders/${created.id}`);
+    installments = detail.commissions.filter((c: any) => c.status !== "VOID");
+    assert.equal(installments.length, 4);
+    assert(installments.every((c: any) => !archivedIds.includes(c.id)));
+    assert(archivedIds.every((id: string) => detail.commissions.some((c: any) => c.id === id && c.status === "VOID")));
   });
   await t.test(
     "material versions keep one current record and retain private ownership",
@@ -1386,7 +1411,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         endsOn: "2026-11-30",
         monthlyRent: "1000",
         depositAmount,
-        commission: { amount: "100" },
+        commission: { mode: "ONE_TIME", dueOn: "2026-11-10", amount: "100" },
       },
       201,
     );
@@ -1465,15 +1490,14 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         400,
       );
       await admin.call("POST", `/orders/${o.id}/close`, undefined, 400);
-      const bill = await finance.call(
+      const bill = await admin.call(
         "POST",
-        "/incomes",
+        `/orders/${o.id}/fees`,
         {
-          orderId: o.id,
-          feeType: "OTHER",
           amount: "900",
           dueOn: "2026-11-15",
-          payerName: "结算租客",
+          remark: "水电费用",
+          sourceKey: crypto.randomUUID(),
         },
         201,
       );
@@ -1657,7 +1681,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         "POST",
         `/incomes/${deposit.id}/adjust`,
         { amount: "600", reason: "不可变更押金", revision: deposit.revision },
-        400,
+        404,
       );
       await finance.call(
         "POST",

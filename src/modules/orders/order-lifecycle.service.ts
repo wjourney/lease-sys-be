@@ -1,12 +1,17 @@
+import { ReceiptsService } from "../incomes/receipts.service";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, internal } from "../../common/auth/actor";
 import { insert, lock, update } from "../../common/database/record-mutations";
 import { demand, fail } from "../../common/utils/errors";
-import { dayAfter, plusMonths, rentPeriod } from "../../common/utils/rent-period";
+import {
+  dayAfter,
+  plusMonths,
+  rentPeriod,
+} from "../../common/utils/rent-period";
 import { number, plain, serial } from "../../common/utils/value";
-import { date } from "../../common/validation/fields";
+import { date, money } from "../../common/validation/fields";
 import { PrismaService } from "../../database/prisma.service";
 import { RentBillingService } from "../incomes/rent-billing.service";
 import { OrdersSchema } from "./dto/orders.schema";
@@ -30,8 +35,7 @@ function validateOrderDetails(d: any) {
       (!p.depositPaid && number(p.depositReceived).gt(0))
     )
       fail("首期实收金额与付款状态不一致");
-    if (p.paymentState === "UNPAID" && p.paid)
-      fail("未付款时不能填报实收金额");
+    if (p.paymentState === "UNPAID" && p.paid) fail("未付款时不能填报实收金额");
     if (p.paymentState === "PARTIAL" && !p.paid)
       fail("部分付款时请填写实收金额");
     if (
@@ -62,6 +66,7 @@ export class OrderLifecycleService {
     @Inject(PrismaService) readonly db: PrismaService,
     @Inject(AccessService) readonly access: AccessService,
     @Inject(RentBillingService) readonly billing: RentBillingService,
+    @Inject(ReceiptsService) readonly receipts: ReceiptsService,
   ) {}
   private async saveOrderCommission(
     tx: any,
@@ -71,6 +76,9 @@ export class OrderLifecycleService {
     reason = "录入订单佣金",
   ) {
     if (!commission) return;
+    if (number(commission.amount).lte(0)) fail("佣金金额必须大于零");
+    if (!commission.mode || !commission.dueOn)
+      fail("请填写佣金结付方式、金额和结付日期");
     const records = await tx.commission.findMany({
       where: { orderId: order.id, deletedAt: null },
       orderBy: { periodStart: "asc" },
@@ -106,25 +114,24 @@ export class OrderLifecycleService {
       )
         fail("佣金月结期数超出支持范围");
     } else {
-      if (mode === "ONE_TIME" && !firstDueOn)
-        fail("请填写佣金结付日期");
+      if (mode === "ONE_TIME" && !firstDueOn) fail("请填写佣金结付日期");
       desired.push({
         mode,
         periodStart:
           mode === "ONE_TIME"
             ? order.startsOn
-            : commission.periodStart ?? first?.periodStart ?? order.startsOn,
+            : (commission.periodStart ?? first?.periodStart ?? order.startsOn),
         periodEnd:
           mode === "ONE_TIME"
             ? order.endsOn
-            : commission.periodEnd ??
+            : (commission.periodEnd ??
               first?.periodEnd ??
               new Date(
                 Math.min(
                   plusMonths(order.startsOn, 1).getTime() - 86400000,
                   order.endsOn.getTime(),
                 ),
-              ),
+              )),
         dueOn: firstDueOn ?? order.startsOn,
         amount: commission.amount,
         remark,
@@ -155,12 +162,12 @@ export class OrderLifecycleService {
         where: {
           commissionId: { in: active.map((record: any) => record.id) },
           deletedAt: null,
-          status: { in: ["UNPAID", "PAID"] },
+          status: { not: "VOID" },
         },
       }))
     )
-      fail("佣金已有付款计划或付款记录，请在佣金管理中调整");
-    const byKey = new Map(records.map((record: any) => [key(record), record]));
+      fail("佣金已有付款计划或付款记录，不能直接修改佣金约定");
+    const byKey = new Map(active.map((record: any) => [key(record), record]));
     for (const record of active) {
       if (desiredByKey.has(key(record))) continue;
       await lock(tx, "commissions", record.id);
@@ -169,6 +176,13 @@ export class OrderLifecycleService {
     for (const entry of desired) {
       const record: any = byKey.get(key(entry));
       if (record) {
+        if (
+          record.periodEnd.getTime() === entry.periodEnd.getTime() &&
+          record.dueOn.getTime() === entry.dueOn.getTime() &&
+          number(record.amount).eq(entry.amount) &&
+          (record.remark ?? "") === (entry.remark ?? "")
+        )
+          continue;
         await lock(tx, "commissions", record.id);
         await update(
           tx,
@@ -304,6 +318,7 @@ export class OrderLifecycleService {
           "生成首期应收",
         );
         await this.saveOrderCommission(tx, a, o, commission);
+        await this.receipts.initial(tx, a, o);
         return o;
       },
       { timeout: 15000 },
@@ -360,8 +375,9 @@ export class OrderLifecycleService {
       .partial()
       .strict()
       .parse(rest);
-    const { commission, ...changes } = d;
+    const { commission: submittedCommission, ...changes } = d;
     return this.db.$transaction(async (tx) => {
+      let commission = submittedCommission;
       let o = await this.access.get(a, "orders", key, tx);
       await lock(tx, "units", o.unitId);
       await lock(tx, "orders", key);
@@ -369,15 +385,54 @@ export class OrderLifecycleService {
       if (o.revision !== revision)
         throw new ConflictException("订单已更新，请刷新");
       if (o.status === "CLOSED") fail("已关闭订单不能修改");
+      if (!commission) {
+        const existing = await tx.commission.findMany({
+          where: { orderId: key, deletedAt: null, status: { not: "VOID" } },
+          orderBy: { periodStart: "asc" },
+        });
+        if (
+          !existing.length ||
+          existing.some(
+            (c) =>
+              !c.mode ||
+              !c.dueOn ||
+              c.amount == null ||
+              number(c.amount).lte(0),
+          )
+        )
+          fail("请填写佣金结付方式、金额和结付日期");
+        if (
+          (changes.startsOn &&
+            changes.startsOn.getTime() !== o.startsOn.getTime()) ||
+          (changes.endsOn && changes.endsOn.getTime() !== o.endsOn.getTime())
+        ) {
+          const first = existing[0];
+          if (["ONE_TIME", "RECURRING_MONTHLY"].includes(first.mode))
+            commission = {
+              mode: first.mode as "ONE_TIME" | "RECURRING_MONTHLY",
+              dueOn: first.dueOn!,
+              amount: first.amount!.toString(),
+              remark: first.remark ?? undefined,
+            };
+        }
+      }
+      const billIds = await tx.income.findMany({
+        where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
+        select: { id: true },
+      });
       const hasReceipts = !!(await tx.income.count({
         where: {
-          orderId: key,
+          parentId: { in: billIds.map((x) => x.id) },
           recordType: "RECEIPT",
           deletedAt: null,
           status: { in: ["PENDING", "CONFIRMED"] },
         },
       }));
-      if (o.status !== "PENDING" || o.firstPaymentRegisteredAt || hasReceipts) {
+      if (
+        o.status !== "PENDING" ||
+        o.occupancyState === "OCCUPIED" ||
+        hasReceipts
+      ) {
         const allowed = new Set([
           "tenantPhone",
           "tenantEmail",
@@ -413,7 +468,14 @@ export class OrderLifecycleService {
       if (number(next.monthlyRent).lte(0)) fail("租金必须大于零");
       if (commission && number(commission.amount).lte(0))
         fail("佣金金额必须大于零");
-      if (["monthlyRent", "depositAmount", "depositPlan", "paymentIntervalMonths"].some((key) => key in changes))
+      if (
+        [
+          "monthlyRent",
+          "depositAmount",
+          "depositPlan",
+          "paymentIntervalMonths",
+        ].some((key) => key in changes)
+      )
         validateDepositPlan(next);
       const unit = await this.access.get(a, "units", o.unitId, tx);
       if (
@@ -422,56 +484,78 @@ export class OrderLifecycleService {
       )
         fail("租期未达到单位最短租期");
       validateOrderDetails(next);
-      const oldBills = await tx.income.findMany({
-        where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
-      });
-      if (
-        await tx.income.count({
-          where: {
-            parentId: { in: oldBills.map((x) => x.id) },
-            deletedAt: null,
-            status: { in: ["PENDING", "CONFIRMED"] },
-          },
-        })
-      )
-        fail("已有收款，不能直接修改租约");
-      for (const bill of oldBills.filter(
-        (x) =>
-          x.sourceKey?.startsWith(`rent:${key}:`) ||
-          x.sourceKey === `deposit:${key}`,
-      )) {
-        await lock(tx, "incomes", bill.id);
-        await update(
-          tx,
-          "incomes",
-          bill,
-          { status: "VOID", sourceKey: null },
-          a,
-          "修改租约，重建未收款账单",
-        );
+      const rentChanged =
+        [
+          "startsOn",
+          "endsOn",
+          "paymentIntervalMonths",
+          "rentDueDay",
+          "firstPeriodProration",
+          "lastPeriodProration",
+        ].some(
+          (field) =>
+            JSON.stringify(plain((o as any)[field])) !==
+            JSON.stringify(plain((next as any)[field])),
+        ) || !number(o.monthlyRent).eq(next.monthlyRent);
+      const depositChanged =
+        !number(o.depositAmount).eq(next.depositAmount) ||
+        o.startsOn.getTime() !== next.startsOn.getTime();
+      let nextBillOn = o.nextBillOn;
+      if (rentChanged || depositChanged) {
+        const oldBills = await tx.income.findMany({
+          where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
+        });
+        if (
+          await tx.income.count({
+            where: {
+              parentId: { in: oldBills.map((x) => x.id) },
+              deletedAt: null,
+              status: { in: ["PENDING", "CONFIRMED"] },
+            },
+          })
+        )
+          fail("已有收款，不能直接修改租约");
+        for (const bill of oldBills.filter(
+          (x) =>
+            (rentChanged && x.sourceKey?.startsWith(`rent:${key}:`)) ||
+            (depositChanged && x.sourceKey === `deposit:${key}`),
+        )) {
+          await lock(tx, "incomes", bill.id);
+          await update(
+            tx,
+            "incomes",
+            bill,
+            { status: "VOID", sourceKey: null },
+            a,
+            "修改租约，重建未收款账单",
+          );
+        }
+        if (depositChanged && number(next.depositAmount).gt(0))
+          await insert(
+            tx,
+            "incomes",
+            {
+              recordNo: serial("B"),
+              recordType: "RECEIVABLE",
+              orderId: key,
+              projectId: o.projectId,
+              unitId: o.unitId,
+              feeType: "DEPOSIT",
+              amount: next.depositAmount,
+              currency: o.currency,
+              dueOn: next.startsOn,
+              payerName: next.tenantName,
+              payerEmail: next.tenantEmail,
+              status: "OPEN",
+              sourceKey: `deposit:${key}`,
+            },
+            a,
+          );
+        if (rentChanged) {
+          const bill = await this.billing.bill(tx, next, next.startsOn, a);
+          nextBillOn = bill.next <= next.endsOn ? bill.next : null;
+        }
       }
-      if (number(next.depositAmount).gt(0))
-        await insert(
-          tx,
-          "incomes",
-          {
-            recordNo: serial("B"),
-            recordType: "RECEIVABLE",
-            orderId: key,
-            projectId: o.projectId,
-            unitId: o.unitId,
-            feeType: "DEPOSIT",
-            amount: next.depositAmount,
-            currency: o.currency,
-            dueOn: next.startsOn,
-            payerName: next.tenantName,
-            payerEmail: next.tenantEmail,
-            status: "OPEN",
-            sourceKey: `deposit:${key}`,
-          },
-          a,
-        );
-      const bill = await this.billing.bill(tx, next, next.startsOn, a);
 
       await this.checkOccupancy(tx, o.unitId, next.startsOn, next.endsOn, o.id);
       const tenantChanged =
@@ -479,13 +563,13 @@ export class OrderLifecycleService {
         changes.tenantPhone !== undefined ||
         changes.tenantEmail !== undefined;
       await this.saveOrderCommission(tx, a, next, commission, reason);
-      return update(
+      const saved = await update(
         tx,
         "orders",
         o,
         {
           ...changes,
-          nextBillOn: bill.next <= next.endsOn ? bill.next : null,
+          nextBillOn,
           ...(tenantChanged
             ? {
                 tenantSnapshot: {
@@ -499,6 +583,8 @@ export class OrderLifecycleService {
         a,
         reason,
       );
+      if (changes.initialPayment) await this.receipts.initial(tx, a, saved);
+      return saved;
     });
   }
   async terminate(a: Actor, key: string, body: any) {
@@ -637,6 +723,142 @@ export class OrderLifecycleService {
       );
     });
   }
+  async moveIn(a: Actor, key: string, body: any) {
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
+    const d = z
+      .object({ date, reason: z.string().trim().min(1) })
+      .strict()
+      .parse(body);
+    return this.db.$transaction(async (tx) => {
+      const first = await this.access.get(a, "orders", key, tx);
+      await lock(tx, "units", first.unitId);
+      await lock(tx, "orders", key);
+      const o = await this.access.get(a, "orders", key, tx);
+      if (o.status !== "ACTIVE") fail("首期款项确认收齐后才能办理入住");
+      if (d.date > new Date() || d.date < o.startsOn || d.date > o.endsOn)
+        fail("入住日期应在租期内，且不能晚于今天");
+      return update(
+        tx,
+        "orders",
+        o,
+        { moveInOn: d.date, occupancyState: "OCCUPIED" },
+        a,
+        d.reason,
+      );
+    });
+  }
+  async fee(a: Actor, key: string, body: any) {
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
+    const d = z
+      .object({
+        amount: money,
+        dueOn: date,
+        remark: z.string().trim().min(1).max(500),
+        sourceKey: z.string().uuid(),
+      })
+      .strict()
+      .parse(body);
+    return this.db.$transaction(async (tx) => {
+      await lock(tx, "orders", key);
+      const o = await this.access.get(a, "orders", key, tx);
+      if (o.status === "CLOSED" || number(d.amount).lte(0))
+        fail("当前订单不可新增该费用");
+      const sourceKey = `fee:${key}:${d.sourceKey}`;
+      const existing = await tx.income.findUnique({ where: { sourceKey } });
+      if (existing) {
+        if (
+          !number(existing.amount).eq(d.amount) ||
+          existing.remark !== d.remark ||
+          existing.dueOn?.getTime() !== d.dueOn.getTime()
+        )
+          fail("重复提交编号冲突");
+        return existing;
+      }
+      return insert(
+        tx,
+        "incomes",
+        {
+          ...d,
+          sourceKey,
+          recordNo: serial("B"),
+          recordType: "RECEIVABLE",
+          orderId: key,
+          projectId: o.projectId,
+          unitId: o.unitId,
+          feeType: "OTHER",
+          currency: o.currency,
+          payerName: o.tenantName,
+          payerEmail: o.tenantEmail,
+          status: "OPEN",
+        },
+        a,
+      );
+    });
+  }
+  async voidFee(a: Actor, key: string, billId: string, body: any) {
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
+    const { reason } = z
+      .object({ reason: z.string().trim().min(1).max(500) })
+      .strict()
+      .parse(body);
+    return this.db.$transaction(async (tx) => {
+      await this.access.get(a, "orders", key, tx);
+      await lock(tx, "orders", key);
+      await lock(tx, "incomes", billId);
+      const bill = await this.access.get(a, "incomes", billId, tx);
+      if (
+        bill.orderId !== key ||
+        bill.recordType !== "RECEIVABLE" ||
+        bill.feeType !== "OTHER"
+      )
+        fail("只能作废本订单的其他费用");
+      if (
+        number(bill.depositOffsetAmount).gt(0) ||
+        (await tx.income.count({
+          where: {
+            parentId: billId,
+            deletedAt: null,
+            status: { in: ["PENDING", "CONFIRMED"] },
+          },
+        }))
+      )
+        fail("已有收款或抵扣，不能作废");
+      if (bill.status === "VOID") return bill;
+      return update(
+        tx,
+        "incomes",
+        bill,
+        { status: "VOID", nextGenerationOn: null },
+        a,
+        reason,
+      );
+    });
+  }
+  async voidCommission(a: Actor, key: string, commissionId: string, body: any) {
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
+    const { reason } = z
+      .object({ reason: z.string().trim().min(1).max(500) })
+      .strict()
+      .parse(body);
+    return this.db.$transaction(async (tx) => {
+      await this.access.get(a, "orders", key, tx);
+      await lock(tx, "orders", key);
+      await lock(tx, "commissions", commissionId);
+      const c = await tx.commission.findFirst({
+        where: { id: commissionId, orderId: key, deletedAt: null },
+      });
+      if (!c) fail("佣金不存在");
+      if (
+        await tx.expense.count({
+          where: { commissionId, deletedAt: null, status: { not: "VOID" } },
+        })
+      )
+        fail("已有付款单，不能作废佣金");
+      return c!.status === "VOID"
+        ? c
+        : update(tx, "commissions", c, { status: "VOID" }, a, reason);
+    });
+  }
   async close(a: Actor, key: string) {
     this.access.allow(a, "orders", true);
     return this.db.$transaction(async (tx) => {
@@ -644,7 +866,7 @@ export class OrderLifecycleService {
       await lock(tx, "units", o.unitId);
       await lock(tx, "orders", key);
       const fresh = await this.access.get(a, "orders", key, tx);
-      if (fresh.status !== "PENDING" || fresh.firstPaymentRegisteredAt)
+      if (fresh.status !== "PENDING" || fresh.occupancyState === "OCCUPIED")
         fail("仅未登记收款的待确认订单可关闭");
       const roots = await tx.income.findMany({
         where: { orderId: key, recordType: "RECEIVABLE" },
@@ -659,6 +881,24 @@ export class OrderLifecycleService {
         })
       )
         fail("已有收款，不能直接关闭订单");
+      const commissions = await tx.commission.findMany({
+        where: { orderId: key, deletedAt: null, status: { not: "VOID" } },
+      });
+      if (
+        await tx.expense.count({
+          where: { orderId: key, deletedAt: null, status: { not: "VOID" } },
+        })
+      )
+        fail("存在未处理的付款单，不能关闭订单");
+      for (const c of commissions)
+        await update(
+          tx,
+          "commissions",
+          c,
+          { status: "VOID" },
+          a,
+          "关闭订单，作废佣金",
+        );
       for (const r of roots)
         await update(tx, "incomes", r, { status: "VOID" }, a, "关闭订单");
       return update(

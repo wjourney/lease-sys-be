@@ -35,11 +35,11 @@ export const ProjectsSchema = z.object({
     .array(
       z.object({
         code: text,
-        name: opt,
-        minArea: money.optional(),
-        maxArea: money.optional(),
-        minRent: money.optional(),
-        maxRent: money.optional(),
+        name: text,
+        minArea: money,
+        maxArea: money,
+        minRent: money,
+        maxRent: money,
       }),
     )
     .optional(),

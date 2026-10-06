@@ -45,7 +45,10 @@ export class PaymentsService {
       const duplicate =
         d.sourceKey && records.find((x) => x.sourceKey === d.sourceKey);
       if (duplicate) {
-        if (d.amount === undefined || !number(duplicate.amount).eq(d.amount))
+        if ((d.amount !== undefined && !number(duplicate.amount).eq(d.amount)) ||
+          duplicate.fundAccountId !== d.fundAccountId || duplicate.paymentMethod !== d.paymentMethod ||
+          new Date(duplicate.paidOn).getTime() !== d.paidOn.getTime() ||
+          (duplicate.bankReference || "") !== (d.bankReference || ""))
           fail("重复提交编号冲突");
         return e;
       }

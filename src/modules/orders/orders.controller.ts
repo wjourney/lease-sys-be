@@ -1,3 +1,4 @@
+import { ReceiptsService } from "../incomes/receipts.service";
 import {
   Body,
   Controller,
@@ -24,11 +25,49 @@ export class OrdersController {
   private readonly logger = new Logger(OrdersController.name);
   constructor(
     @Inject(OrdersService) private service: OrdersService,
+    @Inject(ReceiptsService) private receipts: ReceiptsService,
     @Inject(OrderLifecycleService) private lifecycle: OrderLifecycleService,
     @Inject(DepositSettlementService)
     private deposits: DepositSettlementService,
     @Inject(ContractsService) private contracts: ContractsService,
   ) {}
+  @Post(":id/receipts") receiptsBatch(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Body() d: any,
+  ) {
+    return this.receipts.batch(r.actor, key, d);
+  }
+  @Post(":id/fees") fee(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Body() d: any,
+  ) {
+    return this.lifecycle.fee(r.actor, key, d);
+  }
+  @Post(":id/fees/:billId/void") voidFee(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Param("billId") billId: string,
+    @Body() d: any,
+  ) {
+    return this.lifecycle.voidFee(r.actor, key, billId, d);
+  }
+  @Post(":id/move-in") moveIn(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Body() d: any,
+  ) {
+    return this.lifecycle.moveIn(r.actor, key, d);
+  }
+  @Post(":id/commissions/:commissionId/void") voidCommission(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Param("commissionId") commissionId: string,
+    @Body() d: any,
+  ) {
+    return this.lifecycle.voidCommission(r.actor, key, commissionId, d);
+  }
   @Post(":id/close") close(@Req() r: any, @Param("id") key: string) {
     return this.lifecycle.close(r.actor, key);
   }

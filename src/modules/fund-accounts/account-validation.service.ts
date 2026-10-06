@@ -12,6 +12,12 @@ export class AccountValidationService {
     const f = await tx.fundAccount.findFirst({
       where: { id: key, enabled: true, deletedAt: null },
     });
-    if (!f || f.currency !== currency) fail("请选择同币种的有效资金账户");
+    if (
+      !f ||
+      f.currency !== currency ||
+      !f.bankName?.trim() ||
+      !f.accountIdentifier?.trim()
+    )
+      fail("请选择同币种且资料完整的有效资金账户");
   }
 }

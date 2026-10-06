@@ -293,7 +293,9 @@ model Commission {
   status         String    @default("OPEN")
   remark         String? @db.Text
 
-  @@unique([orderId, mode, periodStart])
+  // Order updates lock the order and maintain one active installment per period.
+  // Historical VOID installments must remain when the settlement mode changes back.
+  @@index([orderId, mode, periodStart])
   @@index([salesCompanyId, salesUserId])
   @@map("commissions")
 }

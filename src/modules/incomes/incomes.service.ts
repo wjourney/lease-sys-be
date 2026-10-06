@@ -1,13 +1,9 @@
-import { ConflictException, Inject, Injectable } from "@nestjs/common";
-import { z } from "zod";
+import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
-import { Actor, financial } from "../../common/auth/actor";
-import { lock, update } from "../../common/database/record-mutations";
+import { Actor } from "../../common/auth/actor";
 import { ResourceService } from "../../common/resources/resource.service";
-import { demand, fail } from "../../common/utils/errors";
-import { plusMonths } from "../../common/utils/rent-period";
+import { fail } from "../../common/utils/errors";
 import { number, plain } from "../../common/utils/value";
-import { money } from "../../common/validation/fields";
 import { PrismaService } from "../../database/prisma.service";
 import { IncomesSchema } from "./dto/incomes.schema";
 import { IncomeBalanceService } from "./income-balance.service";
@@ -38,108 +34,83 @@ export class IncomesService extends ResourceService {
       await this.access.get(a, "projects", data.projectId, tx);
     if (data.amount && number(data.amount).lte(0)) fail("金额必须大于零");
   }
-  protected async beforeEdit(a: Actor, d: any, tx: any, row: any) {
-    const key = row.id;
-    if (row.sourceKey?.startsWith("rent:"))
-      fail("自动租金账单请通过订单修改或财务调整处理");
-    if (number(row.depositOffsetAmount).gt(0))
-      fail("已使用押金抵扣，不能直接修改或删除应收");
-    if (row.orderId && row.feeType === "DEPOSIT")
-      fail("订单押金由租约管理，不能直接修改或删除");
-    if (row.recordType !== "RECEIVABLE" || row.status === "VOID")
-      fail("只能修改有效应收主记录");
-    const n = await tx.income.count({
-      where: {
-        parentId: key,
-        status: {
-          in: ["PENDING", "CONFIRMED"],
-        },
-        deletedAt: null,
-      },
-    });
-    if (n) fail("已有待确认或已确认收款，不能直接修改应收，请使用财务调整");
-    if (d.recurrenceRule)
-      d.nextGenerationOn =
-        d.recurrenceRule.frequency === "MONTHLY"
-          ? plusMonths(d.dueOn ?? row.dueOn, 1)
-          : null;
+  async edit(_a: Actor, _key: string, _body: any): Promise<never> {
+    return fail("应收记录不可直接编辑，请通过来源业务处理");
   }
-  protected async beforeRemove(a: Actor, tx: any, row: any) {
-    const key = row.id;
-    if (row.sourceKey?.startsWith("rent:"))
-      fail("自动租金账单请通过订单修改或财务调整处理");
-    if (number(row.depositOffsetAmount).gt(0))
-      fail("已使用押金抵扣，不能直接修改或删除应收");
-    if (row.orderId && row.feeType === "DEPOSIT")
-      fail("订单押金由租约管理，不能直接修改或删除");
-    if (
-      row.recordType !== "RECEIVABLE" ||
-      (await tx.income.count({
-        where: {
-          parentId: key,
-          status: {
-            in: ["PENDING", "CONFIRMED"],
+  async create(_a: Actor, _body: any): Promise<never> {
+    return fail("请通过订单新增费用，不能直接新增应收");
+  }
+  protected async beforeRemove() {
+    fail("应收和收款记录不能删除，请使用来源业务或收款撤回、冲正");
+  }
+  async detail(a: Actor, key: string) {
+    const result = await super.detail(a, key);
+    if (result.recordType !== "RECEIPT") return result;
+    const group = result.recurrenceRule?.receiptGroupId;
+    const members = group
+      ? await this.db.income.findMany({
+          where: {
+            orderId: result.orderId,
+            recordType: "RECEIPT",
+            deletedAt: null,
+            sourceKey: {
+              startsWith: `${result.sourceKey.startsWith("initial:") ? "initial" : "payment"}:${group}:`,
+            },
           },
-        },
-      }))
-    )
-      fail("实际收款及已有收款的应收不能删除");
-  }
-  protected async beforeCreate(a: Actor, d: any, tx: any) {
-    if (d.orderId && d.feeType === "DEPOSIT")
-      fail("订单押金由租约自动生成，请勿重复新增");
-    d.recordType = "RECEIVABLE";
-    if (d.recurrenceRule?.frequency === "MONTHLY")
-      d.nextGenerationOn = plusMonths(d.dueOn, 1);
-  }
-  async adjust(a: Actor, key: string, body: any) {
-    demand(financial(a));
-    const d = z
-      .object({
-        amount: money,
-        reason: z.string().min(1),
-        revision: z.number().int(),
-      })
-      .strict()
-      .parse(body);
-    return this.db.$transaction(async (tx) => {
-      await lock(tx, "incomes", key);
-      const row = await this.access.get(a, "incomes", key, tx);
-      if (row.recordType !== "RECEIVABLE" || row.status === "VOID")
-        fail("请选择有效应收");
-      if (row.revision !== d.revision)
-        throw new ConflictException("记录已更新");
-      if (row.orderId && row.feeType === "DEPOSIT")
-        fail("订单押金由租约管理，请在押金管理中办理结算");
-      const totals = await this.balances.totals(tx, key);
-      if (
-        number(d.amount).lt(
-          totals.confirmed.add(totals.pending).add(totals.offset),
-        )
-      )
-        fail("调整后应收不能小于已确认及待确认金额");
-      return update(
-        tx,
-        "incomes",
-        row,
-        {
-          adjustmentAmount: number(d.amount).sub(row.amount),
-          status: number(d.amount).eq(totals.confirmed.add(totals.offset))
-            ? "PAID"
-            : totals.confirmed.gt(0)
-              ? "PARTIAL"
-              : "OPEN",
-        },
-        a,
-        d.reason,
-      );
+          select: { id: true },
+        })
+      : [{ id: key }];
+    const vouchers = await this.db.material.findMany({
+      where: {
+        AND: [
+          {
+            incomeId: { in: members.map((r) => r.id) },
+            deletedAt: null,
+            isCurrent: true,
+          },
+          await this.access.scope(a, "materials"),
+        ],
+      },
+      orderBy: { createdAt: "desc" },
     });
+    return {
+      ...result,
+      vouchers: await Promise.all(
+        vouchers.map((v) => this.access.output(a, "materials", v)),
+      ),
+    };
   }
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);
-    if (row.recordType !== "RECEIVABLE") return x;
+    if (row.recordType !== "RECEIVABLE") {
+      const parent = row.parentId
+        ? await this.db.income.findUnique({ where: { id: row.parentId } })
+        : null;
+      if (parent?.orderId) {
+        const order = await this.db.order.findUnique({
+          where: { id: parent.orderId },
+        });
+        x.orderId = parent.orderId;
+        x.orderNo = order?.orderNo;
+      }
+      x.billNo = parent?.recordNo;
+      x.voucherIncomeId = row.recurrenceRule?.voucherIncomeId || row.id;
+      if (row.fundAccountId) {
+        const account = await this.db.fundAccount.findUnique({
+          where: { id: row.fundAccountId },
+        });
+        x.accountName = account?.name;
+      }
+      return x;
+    }
     const t = await this.balances.totals(this.db, row.id);
     Object.assign(x, plain(t));
+    x.overdue =
+      row.status !== "VOID" &&
+      t.remaining.gt(0) &&
+      !!row.dueOn &&
+      row.dueOn.toISOString().slice(0, 10) <
+        new Date().toISOString().slice(0, 10);
     return x;
   }
 }

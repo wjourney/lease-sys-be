@@ -11,6 +11,7 @@ export abstract class ResourceQueryService {
     readonly db: PrismaService,
     readonly access: AccessService,
   ) {}
+  protected async listConditions(_a: Actor, _q: any): Promise<any[]> { return []; }
   async export(a: Actor, q: Record<string, unknown>) {
     const rows: Record<string, unknown>[] = [];
     let page = 1;
@@ -43,7 +44,7 @@ export abstract class ResourceQueryService {
       });
       if (!project?.salesCanViewExactRent) fail("无权按具体租金筛选");
     }
-    const and: any[] = [{ deletedAt: null }, await this.access.scope(a, r)];
+    const and: any[] = [{ deletedAt: null }, await this.access.scope(a, r), ...await this.listConditions(a, q)];
     const search: any = {
       users: ["name", "username", "phone"],
       "sales-companies": ["name", "companyNo"],
@@ -73,7 +74,6 @@ export abstract class ResourceQueryService {
         "orders",
         "incomes",
         "expenses",
-        "commissions",
         "invoices",
         "materials",
       ].includes(r)
@@ -101,7 +101,7 @@ export abstract class ResourceQueryService {
       });
     }
     if (r === "incomes")
-      and.push({ recordType: q.parentId ? "RECEIPT" : "RECEIVABLE" });
+      and.push({ recordType: q.parentId || q.recordType === "RECEIPT" ? "RECEIPT" : "RECEIVABLE" });
     if (r === "materials" && q.current !== "false")
       and.push({ isCurrent: true });
     const filters: any = {

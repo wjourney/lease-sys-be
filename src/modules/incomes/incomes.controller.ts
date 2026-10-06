@@ -1,11 +1,9 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Inject,
   Param,
-  Patch,
   Post,
   Query,
   Req,
@@ -43,12 +41,19 @@ export class IncomesController {
   ) {
     return this.receiptsService.confirm(r.actor, key, false, d.reason);
   }
-  @Post(":id/adjust") adjust(
+  @Post(":id/withdraw") withdraw(
     @Req() r: any,
     @Param("id") key: string,
     @Body() d: any,
   ) {
-    return this.service.adjust(r.actor, key, d);
+    return this.receiptsService.undo(r.actor, key, d);
+  }
+  @Post(":id/reverse") reverse(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Body() d: any,
+  ) {
+    return this.receiptsService.undo(r.actor, key, d, true);
   }
   @Get() list(@Req() r: any, @Query() q: any) {
     return this.service.list(r.actor, q);
@@ -63,29 +68,5 @@ export class IncomesController {
   }
   @Get(":id") detail(@Req() r: any, @Param("id") id: string) {
     return this.service.detail(r.actor, id);
-  }
-  @Post() async create(@Req() r: any, @Body() body: any) {
-    return this.service.enrich(
-      r.actor,
-      await this.service.create(r.actor, body),
-    );
-  }
-  @Patch(":id") async edit(
-    @Req() r: any,
-    @Param("id") id: string,
-    @Body() body: any,
-  ) {
-    return this.service.enrich(
-      r.actor,
-      await this.service.edit(r.actor, id, body),
-    );
-  }
-  @Delete(":id") async remove(
-    @Req() r: any,
-    @Param("id") id: string,
-    @Body() body: any,
-  ) {
-    await this.service.remove(r.actor, id, body.reason);
-    return { ok: true };
   }
 }

@@ -46,6 +46,9 @@ export const OrdersSchema = z.object({
       depositReceived: money,
       dueOn: z.iso.date().optional(),
       receivedOn: z.iso.date().optional(),
+      fundAccountId: uuid.optional(),
+      paymentMethod: z.enum(["BANK", "CASH", "CHEQUE"]).optional(),
+      bankReference: opt,
     })
     .strict()
     .optional(),

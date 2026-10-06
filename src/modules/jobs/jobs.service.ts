@@ -31,11 +31,27 @@ export class JobsService {
     for (const o of expired)
       await this.db.$transaction(async (tx) => {
         await lock(tx, "orders", o.id);
-        const current = await tx.order.findUnique({
+        let current = await tx.order.findUnique({
           where: {
             id: o.id,
           },
         });
+        // Catch up every due period before stopping the schedule at expiry.
+        while (
+          current?.status === "ACTIVE" &&
+          current.nextBillOn &&
+          current.nextBillOn <= current.endsOn
+        ) {
+          const b = await this.billing.bill(tx, current, current.nextBillOn, a);
+          current = await update(
+            tx,
+            "orders",
+            current,
+            { nextBillOn: b.next <= current.endsOn ? b.next : null },
+            a,
+            "租期结束补齐账单",
+          );
+        }
         if (current?.status === "ACTIVE")
           await update(
             tx,
@@ -53,7 +69,7 @@ export class JobsService {
     const orders = await this.db.order.findMany({
       where: {
         status: {
-          in: ["PENDING", "ACTIVE"],
+          in: ["ACTIVE"],
         },
         deletedAt: null,
         nextBillOn: {
@@ -72,7 +88,8 @@ export class JobsService {
             },
           });
           while (
-            o?.nextBillOn &&
+            o?.status === "ACTIVE" &&
+            o.nextBillOn &&
             o.nextBillOn <= o.endsOn &&
             o.nextBillOn.getTime() - o.billLeadDays * 86400000 <=
               cutoff.getTime()
