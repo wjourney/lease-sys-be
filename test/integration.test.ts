@@ -1451,10 +1451,11 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
     );
   }
   await t.test(
-    "edit rebuilds unpaid bills; offsets and partial refunds keep one ledger",
+    "rent edits preserve deposit bills; offsets and partial refunds keep one ledger",
     async () => {
       let o = await create();
       const oldContract = o.currentContractMaterialId;
+      const originalDeposit = o.bills.find((b: any) => b.feeType === "DEPOSIT");
       o = await admin.call("PATCH", `/orders/${o.id}`, {
         revision: o.revision,
         reason: "租金核对",
@@ -1463,7 +1464,12 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       assert.notEqual(o.currentContractMaterialId, oldContract);
       const active = o.bills.filter((b: any) => b.status !== "VOID");
       assert.equal(active.length, 2);
-      assert.equal(o.bills.filter((b: any) => b.status === "VOID").length, 2);
+      const voided = o.bills.filter((b: any) => b.status === "VOID");
+      assert.equal(voided.length, 1);
+      assert.equal(voided[0].feeType, "RENT");
+      const preservedDeposit = active.find((b: any) => b.feeType === "DEPOSIT");
+      assert.equal(preservedDeposit.id, originalDeposit.id);
+      assert.equal(preservedDeposit.revision, originalDeposit.revision);
       assert.equal(
         Number(active.find((b: any) => b.feeType === "RENT").total),
         1100,
