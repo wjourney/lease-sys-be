@@ -5,6 +5,9 @@ import { hashPassword } from "../src/common/auth/password";
 import { insert } from "../src/common/database/record-mutations";
 import { OrderLifecycleService } from "../src/modules/orders/order-lifecycle.service";
 import { RentBillingService } from "../src/modules/incomes/rent-billing.service";
+import { ReceiptsService } from "../src/modules/incomes/receipts.service";
+import { IncomeBalanceService } from "../src/modules/incomes/income-balance.service";
+import { AccountValidationService } from "../src/modules/fund-accounts/account-validation.service";
 const db = new Db();
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -202,6 +205,7 @@ async function main() {
     db,
     new Access(db),
     new RentBillingService(db, new Access(db)),
+    new ReceiptsService(db, new Access(db), new IncomeBalanceService(db, new Access(db)), new AccountValidationService(db, new Access(db))),
   );
   for (let n = 0; n < 3; n++) {
     const o = await b.createOrder(a, {
@@ -215,7 +219,7 @@ async function main() {
       endsOn: "2027-09-30",
       monthlyRent: String(5400 + n * 400),
       depositAmount: String((5400 + n * 400) * 2),
-      commission: { amount: "1200" },
+      commission: { mode: "ONE_TIME", dueOn: "2026-11-05", amount: "1200" },
       paymentIntervalMonths: 1,
       rentDueDay: 1,
       billLeadDays: 7,
