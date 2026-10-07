@@ -1,5 +1,5 @@
 import { Actor } from "../../common/auth/actor";
-import { BillQuery, billAmounts, summarizeBills } from "./bill-query";
+import { BillQuery, billAmounts, billRegistration, summarizeBills } from "./bill-query";
 
 /** A consistent read model shared by the table and its unpaginated totals. */
 export async function listOrderBills(
@@ -164,11 +164,7 @@ export async function listOrderBills(
             orderNo: order.orderNo,
             projectName: projectMap.get(b.projectId),
             unitNo: unitMap.get(b.unitId),
-            canRegister:
-              b.status !== "VOID" &&
-              Number(b.available) > 0 &&
-              order.status !== "CLOSED" &&
-              !(b.feeType === "DEPOSIT" && order.depositSettledAt),
+            ...billRegistration(b, order),
           };
         });
       return {

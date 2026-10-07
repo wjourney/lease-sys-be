@@ -7,7 +7,7 @@ import { number, plain } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
 import { IncomesSchema } from "./dto/incomes.schema";
 import { IncomeBalanceService } from "./income-balance.service";
-import { billAmounts } from "./bill-query";
+import { billAmounts, billRegistration } from "./bill-query";
 @Injectable()
 export class IncomesService extends ResourceService {
   readonly resource = "incomes";
@@ -165,12 +165,7 @@ export class IncomesService extends ResourceService {
     const order = row.orderId
       ? await this.db.order.findUnique({ where: { id: row.orderId } })
       : null;
-    x.canRegister =
-      !!order &&
-      order.status !== "CLOSED" &&
-      x.status !== "VOID" &&
-      t.available.gt(0) &&
-      !(row.feeType === "DEPOSIT" && order.depositSettledAt);
+    Object.assign(x, billRegistration(x, order));
     return x;
   }
 }

@@ -74,3 +74,18 @@ export function summarizeBills(rows: any[]) {
   };
   return { rental: group(false), deposit: group(true) };
 }
+
+/** Explain the same balance/lifecycle restrictions used by receipt registration. */
+export function billRegistration(bill: any, order: any) {
+  const registrationBlockedReason = !order || order.deletedAt
+    ? "关联订单不存在，无法登记收款"
+    : bill.status === "VOID" ? "账单已失效，无法登记收款"
+    : order.status === "CLOSED" ? "订单已关闭，无法登记收款"
+    : bill.feeType === "DEPOSIT" && order.depositSettledAt ? "押金已结算，无法继续登记收款"
+    : Number(bill.remaining) <= 0 ? "账单已付清，无需重复登记"
+    : Number(bill.available) <= 0 && Number(bill.pending) > 0
+      ? "已有收款记录待处理，请在账单详情的收款记录中核对，避免重复登记"
+    : !(Number(bill.available) > 0) ? "账单暂无可登记余额"
+    : null;
+  return { canRegister: registrationBlockedReason === null, registrationBlockedReason };
+}

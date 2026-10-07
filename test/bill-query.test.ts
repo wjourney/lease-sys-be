@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   billAmounts,
+  billRegistration,
   BillQuery,
   summarizeBills,
 } from "../src/modules/incomes/bill-query";
@@ -156,4 +157,16 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
   assert.equal(filtered.summary.rental.total, "10.00");
   assert.equal(filtered.items[0].remaining, "10.00");
   assert.equal(filtered.items[0].available, "5.00");
+});
+
+test("receipt registration explains reserved balances without treating them as paid", () => {
+  const bill = { ...billAmounts({ amount: "100" }, { pending: "100" }), feeType: "RENT" };
+  assert.equal(bill.status, "OPEN");
+  assert.equal(billRegistration(bill, {status: "ACTIVE"}).canRegister, false);
+  assert.match(billRegistration(bill, {status: "ACTIVE"}).registrationBlockedReason!, /已有收款记录/);
+  const partlyReserved = {...bill, available: "40"};
+  assert.equal(billRegistration(partlyReserved, {status: "ACTIVE"}).canRegister, true);
+  assert.match(billRegistration(partlyReserved, {status: "CLOSED"}).registrationBlockedReason!, /订单已关闭/);
+  assert.match(billRegistration({...partlyReserved, feeType: "DEPOSIT"}, {status: "ACTIVE", depositSettledAt: new Date()}).registrationBlockedReason!, /押金已结算/);
+  assert.equal(billRegistration(partlyReserved, null).canRegister, false);
 });
