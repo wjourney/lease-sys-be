@@ -702,3 +702,15 @@ test("optional commission omissions retain an existing schedule", async () => {
   });
   assert.deepEqual(f.tables.commission, before);
 });
+
+
+test("editing rent accepts a commission draft serialized to JSON ISO dates", async () => {
+  const f = editableFixture();
+  f.order.commissionDraft = JSON.parse(JSON.stringify({
+    mode: "ONE_TIME", amount: "50", dueOn: new Date("2026-10-10"),
+  }));
+  const before = structuredClone(f.tables.commission);
+  await f.lifecycle.editOrder(admin, f.order.id, { revision: 1, monthlyRent: "120" });
+  assert.deepEqual(f.tables.commission, before);
+  assert.equal(String(f.tables.order[0].monthlyRent), "120");
+});

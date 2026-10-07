@@ -99,7 +99,7 @@ export class OrderLifecycleService {
       dueOn:
         commission.dueOn instanceof Date
           ? commission.dueOn
-          : date.parse(commission.dueOn),
+          : date.parse(commission.dueOn.slice(0, 10)),
     };
     const mode = commission.mode ?? first?.mode ?? "MONTHLY";
     const firstDueOn = commission.dueOn ?? first?.dueOn;

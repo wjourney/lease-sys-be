@@ -490,8 +490,13 @@ test("full workflow and authorization invariants", async (t) => {
     },
   );
   await t.test("confirmed first rent and deposit activate order", async () => {
-    const roots = (await sales.call("GET", "/incomes?orderId=" + order.id))
-      .items;
+    const roots = (await sales.call("GET", "/orders/" + order.id)).bills.filter(
+      (bill: any) => bill.status !== "VOID" && (
+        bill.feeType === "DEPOSIT" ||
+        bill.periodStart?.slice(0, 10) === order.startsOn.slice(0, 10)
+      ),
+    );
+    assert.equal(roots.length, 2);
     for (const r of roots) {
       const d = await sales.call("GET", "/incomes/" + r.id);
       if (Number(d.available) > 0) {
