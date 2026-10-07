@@ -320,7 +320,12 @@ export class OrderLifecycleService {
             fail("租期未达到单位最短租期");
           validateDepositPlan(d);
         }
-        const commission = parsed.commission ?? draft?.commissionDraft;
+        const suppliedCommission = parsed.commission ?? draft?.commissionDraft;
+        // New orders and completed drafts always use monthly installments.
+        // Existing signed agreements retain their mode in editOrder.
+        const commission = suppliedCommission
+          ? { ...suppliedCommission, mode: "RECURRING_MONTHLY" }
+          : undefined;
         const payment: any = d.initialPayment ?? {
           paid: false,
           rentPaid: false,

@@ -234,6 +234,8 @@ async function main() {
     const commission = await db.commission.findFirstOrThrow({
       where: { orderId: o.id },
     });
+    // These fixtures intentionally retain one legacy commission agreement.
+    await db.commission.deleteMany({ where: { orderId: o.id, id: { not: commission.id } } });
     await db.commission.update({
       where: { id: commission.id },
       data: {

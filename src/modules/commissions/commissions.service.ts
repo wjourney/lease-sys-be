@@ -23,7 +23,7 @@ export class CommissionsService extends ResourceService {
     return fail("佣金由订单生成，请在订单中填写佣金约定");
   }
   protected async listConditions(a: Actor, q: any): Promise<any[]> {
-    if (!q.status) return [];
+    if (!q.status || q.status === "ALL") return [{ status: { not: "VOID" } }];
     if (q.status === "VOID") return [{ status: "VOID" }];
     if (q.status === "UNSET")
       return [{ status: { not: "VOID" }, amount: null }];
@@ -32,7 +32,7 @@ export class CommissionsService extends ResourceService {
     const commissions = await this.db.commission.findMany({
       where: {
         AND: [
-          { deletedAt: null, status: { not: "VOID" }, amount: { not: null } },
+          { deletedAt: null, status: { not: "VOID" } },
           await this.access.scope(a, "commissions"),
         ],
       },
@@ -55,13 +55,14 @@ export class CommissionsService extends ResourceService {
         id: {
           in: commissions
             .filter((c) => {
+              if (c.amount == null) return q.status === "OPEN";
               const paid = number(sums.get(c.id));
               return (
-                (paid.gte(c.amount!)
-                  ? "PAID"
-                  : paid.gt(0)
-                    ? "PARTIAL"
-                    : "OPEN") === q.status
+                (q.status === "OPEN"
+                  ? paid.lt(c.amount!)
+                  : q.status === "PARTIAL"
+                    ? paid.gt(0) && paid.lt(c.amount!)
+                    : paid.gte(c.amount!))
               );
             })
             .map((c) => c.id),
@@ -155,12 +156,10 @@ export class CommissionsService extends ResourceService {
       row.status === "VOID"
         ? "VOID"
         : row.amount === null
-          ? "UNSET"
+          ? "OPEN"
           : number(x.remainingAmount).lte(0)
             ? "PAID"
-            : number(x.paidAmount).gt(0)
-              ? "PARTIAL"
-              : "OPEN";
+            : "OPEN";
     return x;
   }
 }

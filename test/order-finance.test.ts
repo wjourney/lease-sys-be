@@ -714,3 +714,24 @@ test("editing rent accepts a commission draft serialized to JSON ISO dates", asy
   assert.deepEqual(f.tables.commission, before);
   assert.equal(String(f.tables.order[0].monthlyRent), "120");
 });
+
+
+test("new order normalizes commission to monthly installments with a per-month amount", async () => {
+  const f = fixture();
+  f.tables.order.length = 0;
+  f.tables.income.length = 0;
+  Object.assign(f.tables.unit[0], { enabled: true, projectId: f.order.projectId, referenceRent: "300", minLeaseMonths: 1 });
+  f.tables.project.push({ id: f.order.projectId, name: "海湾", status: "ACTIVE" });
+  f.tables.salesCompany.push({ id: f.order.salesCompanyId, status: "ACTIVE" });
+  f.tables.user.push({ id: f.order.salesUserId, role: "SALES", status: "ACTIVE", salesCompanyId: f.order.salesCompanyId });
+  const created = await f.lifecycle.createOrder(admin, {
+    tenantName: "月结公司", unitId: f.order.unitId, salesUserId: f.order.salesUserId,
+    startsOn: "2026-10-07", endsOn: "2027-10-06",
+    commission: { mode: "ONE_TIME", amount: "50", dueOn: "2026-10-10" },
+  });
+  const rows = f.tables.commission.filter(c => c.orderId === created.id);
+  assert.equal(rows.length, 12);
+  assert(rows.every(c => c.mode === "RECURRING_MONTHLY" && Number(c.amount) === 50));
+  assert.equal(rows[11].dueOn.toISOString().slice(0, 10), "2027-09-10");
+  assert.equal(created.commissionDraft.mode, "RECURRING_MONTHLY");
+});

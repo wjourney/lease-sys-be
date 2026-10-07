@@ -1022,7 +1022,7 @@ test("full workflow and authorization invariants", async (t) => {
       depositAmount: "11600",
       depositPlan: "TWO_ONE",
       commission: {
-        mode: "ONE_TIME",
+        mode: "RECURRING_MONTHLY",
         dueOn: "2026-11-05",
         amount: "200",
         remark: "首月佣金",
@@ -1086,11 +1086,11 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.initialPayment.rentReceived, "5800");
     assert.equal(detail.initialPayment.paymentState, "PARTIAL");
     assert.equal(Number(detail.orderCommission.amount), 200);
-    assert.equal(detail.orderCommission.mode, "ONE_TIME");
+    assert.equal(detail.orderCommission.mode, "RECURRING_MONTHLY");
     assert.equal(detail.orderCommission.periodStart.slice(0, 10), "2026-11-01");
-    assert.equal(detail.orderCommission.periodEnd.slice(0, 10), "2027-10-31");
+    assert.equal(detail.orderCommission.periodEnd.slice(0, 10), "2026-11-30");
     assert.equal(detail.orderCommission.dueOn.slice(0, 10), "2026-11-05");
-    assert.equal(detail.commissions.length, 1);
+    assert.equal(detail.commissions.length, 12);
     assert.equal(detail.status, "PENDING");
     const edited = await admin.call("PATCH", `/orders/${created.id}`, {
       revision: detail.revision,
