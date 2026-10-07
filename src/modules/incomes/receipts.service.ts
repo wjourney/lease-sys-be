@@ -189,11 +189,8 @@ export class ReceiptsService {
       const amount =
         p[bill.feeType === "DEPOSIT" ? "depositReceived" : "rentReceived"] ??
         "0";
-      if (
-        p.paymentState === "PAID" &&
-        !number(amount).eq(number(bill.amount).add(bill.adjustmentAmount))
-      )
-        fail("实收金额与首期账单不一致，未付齐请选择部分付款");
+      // The declaration does not confirm settlement. Register the actual
+      // amount; finance confirmation and bill balances determine settlement.
       if (number(amount).lte(0)) continue;
       const r = await this.register(
         tx,
