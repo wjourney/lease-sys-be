@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { date, money, opt, text } from "../../../common/validation/fields";
+import { money, opt, text } from "../../../common/validation/fields";
 const ProjectExtraSchema = z
   .object({
-    developmentDate: z.iso.date().optional(),
     landLeaseEndDate: z.iso.date().optional(),
     salesStatus: z.enum(["现售", "待售", "售罄"]).optional(),
     buildingStatus: z.enum(["现楼", "楼花", "建设中"]).optional(),
@@ -24,7 +23,6 @@ export const ProjectsSchema = z.object({
   address: text,
   propertyName: opt,
   developer: opt,
-  completionDate: date.nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),
   latitude: z.number().min(-90).max(90).nullable().optional(),
   description: opt,
@@ -36,8 +34,11 @@ export const ProjectsSchema = z.object({
       z.object({
         code: text,
         name: text,
-        minArea: money,
-        maxArea: money,
+        building: text,
+        floor: text,
+        area: money,
+        layout: text,
+        age: z.number().int().min(0).max(999),
         minRent: money,
         maxRent: money,
       }),

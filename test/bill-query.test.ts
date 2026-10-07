@@ -25,7 +25,7 @@ test("pending money reserves registration balance but does not settle an overdue
     offset: "0.00",
     remaining: "80.20",
     available: "50.10",
-    status: "PARTIAL",
+    status: "OPEN",
     overdue: true,
   });
 });
@@ -72,6 +72,7 @@ test("query rejects invalid dates, ids, currency and reversed periods", () => {
     { from: "2026-02-30" },
     { from: "2026-10-02", to: "2026-10-01" },
     { projectId: "all" },
+    { orderId: "all" },
     { currency: "HKD,CNY" },
     { status: "PENDING" },
     { pageSize: 1000 },
@@ -145,6 +146,11 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
   assert.deepEqual(where.AND[1], { orderId: { in: ["o"] } });
   assert.equal(where.AND[0].currency, "HKD");
   assert.ok(where.AND.some((x: any) => x.status?.not === "VOID"));
+  const orderFilter = "10000000-0000-4000-8000-000000000001";
+  await listOrderBills(db, access, actor, { orderId: orderFilter });
+  assert.ok(where.AND.some((part: any) => part.orderId === orderFilter));
+  assert.deepEqual(where.AND[0].orderId, { in: ["o"] });
+  assert.deepEqual(where.AND[1], { orderId: { in: ["o"] } });
   const filtered = await listOrderBills(db, access, actor, { pending: "true" });
   assert.equal(filtered.total, 1);
   assert.equal(filtered.summary.rental.total, "10.00");

@@ -126,25 +126,15 @@ test("commission mode switch preserves void history and never revives it on swit
     originalId,
   );
 });
-test("commission is mandatory for legacy edits and cannot be zero even after receipts", async () => {
+test("omitting commission allows editing orders without a commission agreement", async () => {
   const f = editableFixture();
   f.tables.commission.length = 0;
-  await assert.rejects(
-    f.lifecycle.editOrder(admin, f.order.id, {
-      revision: 1,
-      reason: "修改备注",
-      remark: "a",
-    }),
-  );
-  f.order.status = "ACTIVE";
-  await assert.rejects(
-    f.lifecycle.editOrder(admin, f.order.id, {
-      revision: 1,
-      reason: "佣金调整",
-      commission: { ...commissionInput, amount: "0" },
-    }),
-  );
-  assert.equal(f.tables.order[0].revision, 1);
+  await f.lifecycle.editOrder(admin, f.order.id, {
+    revision: 1,
+    remark: "稍后补充佣金",
+  });
+  assert.equal(f.tables.order[0].remark, "稍后补充佣金");
+  assert.equal(f.tables.commission.length, 0);
 });
 test("commission with a downstream payment plan rejects change and rolls back everything", async () => {
   const f = editableFixture();
@@ -207,6 +197,10 @@ function fixture() {
     commission: [],
     unit: [],
     material: [],
+    user: [],
+    project: [],
+    salesCompany: [],
+    fundAccount: [],
   };
   const db: any = { $queryRawUnsafe: async () => [] };
   for (const name of Object.keys(tables))
@@ -217,6 +211,11 @@ function fixture() {
         tables[name].find((r) => matches(r, where))
           ? { ...tables[name].find((r) => matches(r, where)) }
           : null,
+      findUniqueOrThrow: async ({ where }: any) => {
+        const row = tables[name].find((r) => matches(r, where));
+        assert.ok(row);
+        return { ...row };
+      },
       findFirst: async ({ where }: any) =>
         tables[name].find((r) => matches(r, where))
           ? { ...tables[name].find((r) => matches(r, where)) }
@@ -230,6 +229,7 @@ function fixture() {
           deletedAt: null,
           status: name === "invoice" ? "ACTIVE" : "OPEN",
           operationLogs: [],
+          currency: "HKD",
           adjustmentAmount: "0",
           depositOffsetAmount: "0",
           ...data,
@@ -264,6 +264,8 @@ function fixture() {
   };
   const map: Record<string, string> = {
     orders: "order",
+    projects: "project",
+    "sales-companies": "salesCompany",
     incomes: "income",
     units: "unit",
     commissions: "commission",
@@ -300,6 +302,8 @@ function fixture() {
     occupancyState: "LOCKED",
     startsOn: new Date("2026-10-01"),
     endsOn: new Date("2027-09-30"),
+    salesCompanyId: randomUUID(),
+    salesUserId: randomUUID(),
     tenantName: "Tenant",
     currency: "HKD",
     depositAmount: "200",
@@ -356,7 +360,7 @@ function fixture() {
   };
 }
 
-test("initial paid declaration creates pending receipts, shares proof, keeps unit locked", async () => {
+test("initial paid declaration directly confirms receipts and activates the order", async () => {
   const f = fixture();
   const initialPayment = {
     paid: true,
@@ -371,14 +375,16 @@ test("initial paid declaration creates pending receipts, shares proof, keeps uni
   const rows = f.tables.income.filter((r) => r.recordType === "RECEIPT");
   assert.equal(rows.length, 2);
   assert.ok(
-    rows.every((r) => r.status === "PENDING" && r.orderId === f.order.id),
+    rows.every((r) => r.status === "CONFIRMED" && r.orderId === f.order.id),
   );
   assert.equal(rows[1].recurrenceRule.voucherIncomeId, rows[0].id);
   assert.equal(f.tables.order[0].occupancyState, "LOCKED");
   assert.equal(
     (await f.balances.totals(f.db, rows[0].parentId)).confirmed.toString(),
-    "0",
+    "100",
   );
+  assert.equal(f.tables.order[0].status, "ACTIVE");
+  assert.equal(f.tables.invoice.length, 2);
 });
 test("initial overpayment rolls back all allocations", async () => {
   const f = fixture();
@@ -413,38 +419,59 @@ test("batch retry is idempotent and rejects a changed allocation set", async () 
     }),
   );
 });
-test("partial pending payment reserves only available balance, not confirmed money", async () => {
+test("partial receipt directly posts money and keeps the bill OPEN", async () => {
   const f = fixture();
   const bill = f.tables.income[0];
   const r = await f.receipts.receipt(operations, bill.id, {
     ...f.payment,
     amount: "60",
   });
-  let sum = await f.balances.totals(f.db, bill.id);
+  const sum = await f.balances.totals(f.db, bill.id);
   assert.equal(sum.available.toString(), "40");
-  assert.equal(sum.remaining.toString(), "100");
-  await f.receipts.confirm(admin, r.id, false, "金额错误");
-  sum = await f.balances.totals(f.db, bill.id);
-  assert.equal(sum.available.toString(), "100");
-  assert.equal(f.tables.order[0].occupancyState, "LOCKED");
+  assert.equal(sum.remaining.toString(), "40");
+  assert.equal(sum.pending.toString(), "0");
+  assert.equal(r.status, "CONFIRMED");
+  assert.equal(f.tables.income[0].status, "OPEN");
+  await f.receipts.undo(admin, r.id, { reason: "金额错误" }, true);
+  assert.equal(
+    (await f.balances.totals(f.db, bill.id)).remaining.toString(),
+    "100",
+  );
 });
-test("only full confirmed first payment activates order; confirmation retry creates no duplicate invoice", async () => {
+test("first rent alone stays pending; the deposit receipt activates order; retry never duplicates invoice", async () => {
   const f = fixture();
-  const result = await f.receipts.batch(operations, f.order.id, f.batch());
-  await f.receipts.confirm(admin, result.receipts[0].id, true);
+  await f.receipts.receipt(operations, f.tables.income[0].id, {
+    ...f.payment,
+    amount: "100",
+  });
   assert.equal(f.tables.order[0].status, "PENDING");
-  await f.receipts.confirm(admin, result.receipts[1].id, true);
-  await f.receipts.confirm(admin, result.receipts[1].id, true);
+  const payment = { ...f.payment, sourceKey: randomUUID(), amount: "200" };
+  await f.receipts.receipt(operations, f.tables.income[1].id, payment);
+  await f.receipts.receipt(operations, f.tables.income[1].id, payment);
   assert.equal(f.tables.order[0].status, "ACTIVE");
-  assert.equal(f.tables.order[0].occupancyState, "LOCKED");
   assert.equal(f.tables.invoice.length, 2);
 });
+async function legacyPending(
+  f: ReturnType<typeof fixture>,
+  bill: any,
+  amount: string,
+) {
+  return f.db.income.create({
+    data: {
+      ...f.payment,
+      receivedOn: new Date(f.payment.receivedOn),
+      recordType: "RECEIPT",
+      parentId: bill.id,
+      orderId: f.order.id,
+      status: "PENDING",
+      amount,
+      createdBy: operations.id,
+    },
+  });
+}
 test("withdrawal requires creator or finance, then releases pending reservation", async () => {
   const f = fixture();
-  const r = await f.receipts.receipt(operations, f.tables.income[0].id, {
-    ...f.payment,
-    amount: "50",
-  });
+  const r = await legacyPending(f, f.tables.income[0], "50");
   await assert.rejects(
     f.receipts.undo({ ...operations, id: randomUUID() }, r.id, {
       reason: "withdraw",
@@ -494,7 +521,12 @@ test("settlement or downstream payment blocks reversal", async () => {
 });
 test("all rejected receipts unlock lease editing and cancellation despite historical registration", async () => {
   const f = fixture();
-  const result = await f.receipts.batch(operations, f.order.id, f.batch());
+  (f.order as any).firstPaymentRegisteredAt = new Date();
+  const result = {
+    receipts: await Promise.all(
+      f.tables.income.slice(0, 2).map((b) => legacyPending(f, b, b.amount)),
+    ),
+  };
   for (const r of result.receipts)
     await f.receipts.confirm(admin, r.id, false, "重录");
   const details = new OrderDetailService(f.db, f.access, {} as any);
@@ -561,4 +593,112 @@ test("unactivated order never generates subsequent rent bills", async () => {
     (await jobs.generateDue(admin, new Date("2026-12-01"))).generated,
     0,
   );
+});
+
+test("company name alone creates an inert draft with defaults and no financial artifacts", async () => {
+  const f = fixture();
+  f.tables.order.length = 0;
+  f.tables.income.length = 0;
+  const order = await f.lifecycle.createOrder(admin, {
+    tenantName: "海湾有限公司",
+  });
+  assert.equal(order.status, "DRAFT");
+  assert.equal(order.occupancyState, "RELEASED");
+  assert.equal(order.unitId, null);
+  assert.equal(order.monthlyRent, null);
+  assert.equal(order.depositAmount, null);
+  assert.equal(order.tenantType, "COMPANY");
+  assert.equal(order.paymentIntervalMonths, 1);
+  assert.equal(f.tables.income.length, 0);
+  assert.equal(f.tables.commission.length, 0);
+  assert.equal(f.tables.invoice.length, 0);
+  const updated = await f.lifecycle.editOrder(admin, order.id, {
+    revision: order.revision,
+    tenantName: "海湾有限公司",
+    tenantType: "PERSON",
+    registrationNoType: null,
+    moveInOn: null,
+  });
+  assert.equal(updated.status, "DRAFT");
+});
+test("completing draft generates monthly bills exactly once without requiring a salesperson or commission", async () => {
+  const f = fixture();
+  f.tables.order.length = 0;
+  f.tables.income.length = 0;
+  const unit = f.tables.unit[0];
+  Object.assign(unit, {
+    enabled: true,
+    projectId: f.order.projectId,
+    referenceRent: "300",
+    minLeaseMonths: 1,
+  });
+  f.tables.project.push({
+    id: f.order.projectId,
+    status: "ACTIVE",
+    name: "海湾",
+  });
+  const draft = await f.lifecycle.createOrder(admin, {
+    tenantName: "海湾有限公司",
+    startsOn: "2026-10-07",
+  });
+  const order = await f.lifecycle.editOrder(admin, draft.id, {
+    revision: draft.revision,
+    tenantName: draft.tenantName,
+    unitId: unit.id,
+  });
+  assert.equal(order.status, "PENDING");
+  assert.equal(String(order.monthlyRent), "300");
+  assert.equal(String(order.depositAmount), "300.00");
+  assert.equal(order.endsOn.toISOString().slice(0, 10), "2027-10-06");
+  assert.equal(f.tables.income.filter((b) => b.feeType === "RENT").length, 12);
+  assert.equal(
+    f.tables.income.filter((b) => b.feeType === "DEPOSIT").length,
+    1,
+  );
+  assert.equal(f.tables.commission.length, 0);
+  await assert.rejects(
+    f.lifecycle.editOrder(admin, draft.id, {
+      revision: draft.revision,
+      tenantName: draft.tenantName,
+      unitId: unit.id,
+    }),
+  );
+  assert.equal(f.tables.income.length, 13);
+});
+test("batch receipt isolates failures and retry is idempotent per bill", async () => {
+  const f = fixture();
+  const entries = f.tables.income.map((bill, i) => ({
+    ...f.payment,
+    sourceKey: randomUUID(),
+    billId: bill.id,
+    amount: i ? "201" : "100",
+  }));
+  const result = await f.receipts.batchBills(admin, { entries });
+  assert.deepEqual(
+    result.results.map((r) => r.ok),
+    [true, false],
+  );
+  assert.equal(f.tables.invoice.length, 1);
+  entries[1].amount = "200";
+  const retry = await f.receipts.batchBills(admin, { entries });
+  assert.deepEqual(
+    retry.results.map((r) => r.ok),
+    [true, true],
+  );
+  assert.equal(f.tables.invoice.length, 2);
+  assert.equal(f.tables.order[0].status, "ACTIVE");
+  await assert.rejects(
+    f.receipts.batchBills({ ...admin, role: "SALES" }, { entries }),
+  );
+});
+
+test("optional commission omissions retain an existing schedule", async () => {
+  const f = editableFixture();
+  const before = structuredClone(f.tables.commission);
+  await f.lifecycle.editOrder(admin, f.order.id, {
+    revision: 1,
+    commission: { mode: "ONE_TIME" },
+    remark: "补充备注",
+  });
+  assert.deepEqual(f.tables.commission, before);
 });

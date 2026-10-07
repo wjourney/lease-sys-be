@@ -11,6 +11,7 @@ const day = z
 export const BillQuery = z
   .object({
     q: z.string().trim().max(100).optional(),
+    orderId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
     unitId: z.string().uuid().optional(),
     feeType: z.enum(["RENT", "DEPOSIT", "OTHER"]).optional(),
@@ -42,13 +43,7 @@ export function billAmounts(
   const offset = number(b.depositOffsetAmount ?? 0);
   const remaining = total.sub(confirmed).sub(offset);
   const status =
-    b.status === "VOID"
-      ? "VOID"
-      : remaining.lte(0)
-        ? "PAID"
-        : confirmed.add(offset).gt(0)
-          ? "PARTIAL"
-          : "OPEN";
+    b.status === "VOID" ? "VOID" : remaining.lte(0) ? "PAID" : "OPEN";
   return {
     total: total.toFixed(2),
     confirmed: confirmed.toFixed(2),

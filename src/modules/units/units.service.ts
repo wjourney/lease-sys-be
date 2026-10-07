@@ -9,6 +9,7 @@ import { UnitsSchema } from "./dto/units.schema";
 import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
 import { projectUnitTypes } from "../projects/project-unit-types";
+import { unitTypeValues } from "../projects/unit-type-values";
 import { lock } from "../../common/database/record-mutations";
 @Injectable()
 export class UnitsService extends ResourceService {
@@ -33,15 +34,16 @@ export class UnitsService extends ResourceService {
     await lock(tx, "projects", d.projectId);
     const project = await this.access.get(a, "projects", d.projectId, tx);
     const types = await projectUnitTypes(tx, project);
-    if (!types.some((x) => x.code === d.unitTypeCode))
-      fail("请选择所属项目的单位类型");
-    if (number(d.area).lte(0)) fail("实用面积必须大于 0");
-    if (number(d.minRent).gt(d.maxRent)) fail("最低价不得高于最高价");
-    if (
-      number(d.referenceRent).lt(d.minRent) ||
-      number(d.referenceRent).gt(d.maxRent)
-    )
-      fail("参考月租须介于最低价和最高价之间");
+    const type = types.find((x) => x.code === d.unitTypeCode);
+    if (!type) fail("请选择所属项目的单位类型");
+    Object.assign(data, unitTypeValues(type, { ...row?.extra, ...data.extra }));
+    if (!d.roomNo?.trim()) fail("请填写房号");
+    data.roomNo = d.roomNo.trim();
+    data.unitNo = `${type.building} ${/楼$/.test(type.floor) ? type.floor : `${type.floor}楼`} ${data.roomNo}`;
+    if (number(d.referenceRent).lt(type.minRent) || number(d.referenceRent).gt(type.maxRent))
+      fail("月租价格须介于单位类型的最低价和最高价之间");
+    const duplicate = await tx.unit.findFirst({ where: { projectId: d.projectId, building: type.building, floor: type.floor, roomNo: data.roomNo, deletedAt: null, ...(row ? { id: { not: row.id } } : {}) } });
+    if (duplicate) fail("该期/座、楼层下已存在此房号");
     if (row && data.projectId && data.projectId !== row.projectId)
       fail("已有单位不能转移项目");
   }
@@ -69,7 +71,7 @@ export class UnitsService extends ResourceService {
         startsOn: "asc",
       },
     });
-    x.occupancyStatus = o?.occupancyState ?? "AVAILABLE";
+    x.occupancyStatus = o ? "OCCUPIED" : "AVAILABLE";
     const firstPhoto = await this.db.material.findFirst({
       where: {
         unitId: row.id,

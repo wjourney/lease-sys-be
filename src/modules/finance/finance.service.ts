@@ -41,7 +41,7 @@ export class FinanceService {
         await Promise.all([
           tx.income.findMany({
             where: {
-              deletedAt: null,
+              OR: [{ deletedAt: null }, { status: "REVERSED" }],
               recordType: "RECEIPT",
               currency: q.currency,
               status: { in: ["CONFIRMED", "REVERSED"] },
@@ -96,6 +96,7 @@ export class FinanceService {
             select: {
               id: true,
               orderNo: true,
+              status: true,
               projectId: true,
               createdAt: true,
             },
@@ -178,7 +179,7 @@ export class FinanceService {
     );
     const { q, data, rows, orders } = await this.snapshot(a, input);
     const selectedOrders = data.orders.filter(
-      (o) =>
+      (o) => o.status !== "DRAFT" &&
         (!q.projectId || o.projectId === q.projectId) &&
         businessDay(o.createdAt) >= q.from &&
         businessDay(o.createdAt) <= q.to,

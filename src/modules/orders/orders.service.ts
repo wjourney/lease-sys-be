@@ -1,3 +1,9 @@
+import { lock } from "../../common/database/record-mutations";
+import {
+  deleteOrderGraph,
+  deletionSummary,
+  orderDeletionGraph,
+} from "./order-deletion";
 import { orderSettlement } from "./order-settlement";
 import { OrderDetailService } from "./order-detail.service";
 import { Inject, Injectable } from "@nestjs/common";
@@ -70,8 +76,24 @@ export class OrdersService extends ResourceService {
         : "HANDOVER_PENDING";
     return result;
   }
-  protected async beforeRemove(a: Actor, tx: any, row: any) {
-    fail("该业务请使用关闭、作废或停用操作");
+  async deletionPreview(a: Actor, key: string) {
+    this.access.allow(a, "orders", true);
+    await this.access.get(a, "orders", key);
+    return deletionSummary(await orderDeletionGraph(this.db, key));
+  }
+  async remove(a: Actor, key: string, reason: string) {
+    this.access.allow(a, "orders", true);
+    if (!reason?.trim()) fail("请填写删除原因");
+    return this.db.$transaction(
+      async (tx) => {
+        const first = await this.access.get(a, "orders", key, tx);
+        if (first.unitId) await lock(tx, "units", first.unitId);
+        await lock(tx, "orders", key);
+        const order = await this.access.get(a, "orders", key, tx);
+        return deleteOrderGraph(tx, a, order, reason.trim());
+      },
+      { timeout: 20000 },
+    );
   }
   create(a: Actor, body: any) {
     return this.lifecycle.createOrder(a, body);

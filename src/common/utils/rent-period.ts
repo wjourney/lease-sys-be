@@ -12,6 +12,17 @@ export function plusMonths(date: Date, months: number) {
 }
 export const dayAfter = (d: Date) => new Date(d.getTime() + 86400000);
 export function rentPeriod(order: any, start: Date) {
+  if (order.billingVersion === 2) {
+    let index = (start.getUTCFullYear() - order.startsOn.getUTCFullYear()) * 12 + start.getUTCMonth() - order.startsOn.getUTCMonth();
+    while (plusMonths(order.startsOn, index) > start) index--;
+    const periodStart = plusMonths(order.startsOn, index);
+    const next = plusMonths(order.startsOn, index + 1);
+    const end = new Date(Math.min(next.getTime() - 86400000, order.endsOn.getTime()));
+    const partial = start > periodStart || end.getTime() + 86400000 < next.getTime();
+    const prorate = (!order.firstPeriodProration && start.getTime() === order.startsOn.getTime()) || (!order.lastPeriodProration && end.getTime() === order.endsOn.getTime()) ? false : true;
+    const ratio = partial && prorate ? number(end.getTime() - start.getTime() + 86400000).div(next.getTime() - periodStart.getTime()) : number(1);
+    return { end, amount: number(order.monthlyRent).mul(ratio).toDecimalPlaces(2) };
+  }
   const last = new Date(
     Math.min(
       plusMonths(start, order.paymentIntervalMonths).getTime() - 86400000,

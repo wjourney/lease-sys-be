@@ -2,17 +2,17 @@ import { z } from "zod";
 import { money, opt, text, uuid } from "../../../common/validation/fields";
 export const UnitsSchema = z.object({
   projectId: uuid,
-  unitNo: text,
+  unitNo: text.optional(),
   unitTypeCode: text,
   building: opt,
   floor: opt,
-  roomNo: opt,
-  area: money,
+  roomNo: text,
+  area: money.optional(),
   layout: opt,
   decoration: opt,
   referenceRent: money,
-  minRent: money,
-  maxRent: money,
+  minRent: money.optional(),
+  maxRent: money.optional(),
   minLeaseMonths: z.number().int().min(1).max(120).optional(),
   commissionNote: opt,
   extra: z.object({

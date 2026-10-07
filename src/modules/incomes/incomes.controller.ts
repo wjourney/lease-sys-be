@@ -20,6 +20,9 @@ export class IncomesController {
     @Inject(IncomesService) private service: IncomesService,
     @Inject(ReceiptsService) private receiptsService: ReceiptsService,
   ) {}
+  @Post("batch-receipts") batchReceipts(@Req() r: any, @Body() body: any) {
+    return this.receiptsService.batchBills(r.actor, body);
+  }
   @Get("bills") bills(@Req() r: any, @Query() q: any) {
     return listOrderBills(this.service.db, this.service.access, r.actor, q);
   }

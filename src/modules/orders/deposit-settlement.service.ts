@@ -140,7 +140,7 @@ export class DepositSettlementService {
             bill,
             {
               depositOffsetAmount: number(bill.depositOffsetAmount).add(offset),
-              status: remaining.eq(offset) ? "PAID" : "PARTIAL",
+              status: remaining.eq(offset) ? "PAID" : "OPEN",
             },
             a,
             `押金抵扣：${d.reason}`,

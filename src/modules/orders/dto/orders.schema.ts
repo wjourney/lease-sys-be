@@ -8,20 +8,22 @@ import {
   uuid,
 } from "../../../common/validation/fields";
 export const OrdersSchema = z.object({
-  unitId: uuid,
-  salesUserId: uuid,
-  tenantType: z.enum(["PERSON", "COMPANY"]),
+  projectId: uuid.optional(),
+  unitId: uuid.optional(),
+  salesCompanyId: uuid.optional(),
+  salesUserId: uuid.optional(),
+  tenantType: z.enum(["PERSON", "COMPANY"]).optional(),
   tenantName: text,
-  registrationNoType: z.enum(["BR", "CR", "HKID", "PASSPORT"]).optional(),
+  registrationNoType: z.enum(["BR", "CR", "HKID", "PASSPORT"]).nullish(),
   tenantRegistrationNo: opt,
   tenantContactName: opt,
   tenantPhone: opt,
   tenantEmail: z.union([z.email(), z.literal("")]).optional(),
-  startsOn: date,
-  endsOn: date,
-  monthlyRent: money,
-  depositAmount: money,
-  depositPlan: z.enum(["ONE_ONE", "TWO_ONE", "THREE_ONE", "OTHER"]).optional(),
+  startsOn: date.optional(),
+  endsOn: date.optional(),
+  monthlyRent: money.optional(),
+  depositAmount: money.optional(),
+  depositPlan: z.enum(["ONE_ONE", "TWO_ONE", "THREE_ONE", "OTHER"]).nullish(),
   commission: z
     .object({
       mode: z
@@ -30,12 +32,12 @@ export const OrdersSchema = z.object({
       periodStart: date.optional(),
       periodEnd: date.optional(),
       dueOn: date.optional(),
-      amount: money,
+      amount: money.optional(),
       remark: opt,
     })
     .strict()
     .optional(),
-  moveInOn: date.optional(),
+  moveInOn: date.nullish(),
   initialPayment: z
     .object({
       paymentState: z.enum(["UNPAID", "PARTIAL", "PAID"]).optional(),
@@ -53,7 +55,7 @@ export const OrdersSchema = z.object({
     .strict()
     .optional(),
   paymentIntervalMonths: z.number().int().min(1).max(12).optional(),
-  rentDueDay: z.number().int().min(1).max(28).optional(),
+  rentDueDay: z.number().int().min(1).max(31).optional(),
   billLeadDays: z.number().int().min(0).max(60).optional(),
   firstPeriodProration: z.boolean().optional(),
   lastPeriodProration: z.boolean().optional(),

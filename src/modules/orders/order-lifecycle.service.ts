@@ -2,7 +2,7 @@ import { ReceiptsService } from "../incomes/receipts.service";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
-import { Actor, internal } from "../../common/auth/actor";
+import { Actor } from "../../common/auth/actor";
 import { insert, lock, update } from "../../common/database/record-mutations";
 import { demand, fail } from "../../common/utils/errors";
 import {
@@ -76,16 +76,31 @@ export class OrderLifecycleService {
     commission: any,
     reason = "录入订单佣金",
   ) {
-    if (!commission) return;
-    if (number(commission.amount).lte(0)) fail("佣金金额必须大于零");
-    if (!commission.mode || !commission.dueOn)
-      fail("请填写佣金结付方式、金额和结付日期");
+    if (!commission || !order.salesCompanyId || !order.salesUserId) return;
     const records = await tx.commission.findMany({
       where: { orderId: order.id, deletedAt: null },
       orderBy: { periodStart: "asc" },
     });
     const active = records.filter((record: any) => record.status !== "VOID");
     const first = active[0];
+    // Omitted optional fields preserve an existing agreement; incomplete new
+    // agreements remain on the order until they can produce payable records.
+    commission = {
+      ...first,
+      ...Object.fromEntries(
+        Object.entries(commission).filter(([, value]) => value != null),
+      ),
+    };
+    if (!commission.mode || !commission.dueOn || commission.amount == null)
+      return;
+    if (!number(commission.amount).gt(0)) fail("佣金金额必须大于零");
+    commission = {
+      ...commission,
+      dueOn:
+        commission.dueOn instanceof Date
+          ? commission.dueOn
+          : date.parse(commission.dueOn),
+    };
     const mode = commission.mode ?? first?.mode ?? "MONTHLY";
     const firstDueOn = commission.dueOn ?? first?.dueOn;
     const remark = commission.remark ?? first?.remark ?? null;
@@ -211,119 +226,188 @@ export class OrderLifecycleService {
     }
   }
   async createOrder(a: Actor, body: any) {
+    return this.saveDraftOrNew(a, body);
+  }
+  private async saveDraftOrNew(a: Actor, body: any, draftId?: string) {
     this.access.allow(a, "orders", true);
-    const d = OrdersSchema.strict().parse(body);
-    const { commission, ...orderData } = d;
-    if (d.startsOn > d.endsOn) fail("租期开始日期不能晚于结束日期");
-    if (number(d.monthlyRent).lte(0)) fail("租金必须大于零");
-    if (!commission || number(commission.amount).lte(0))
-      fail("请填写大于零的佣金金额");
-    validateDepositPlan(d);
-    validateOrderDetails(d);
+    const { revision, reason, ...input } = body;
+    const parsed = (draftId ? OrdersSchema.partial() : OrdersSchema)
+      .strict()
+      .parse(input);
     return this.db.$transaction(
       async (tx) => {
-        await defaultInitialAccount(tx, orderData.initialPayment);
-        await lock(tx, "units", d.unitId);
-        const u = await this.access.get(a, "units", d.unitId, tx);
-        if (!u.enabled) fail("单位已停用");
-        const project = await tx.project.findUnique({
-          where: { id: u.projectId },
-        });
-        if (!project || project.status !== "ACTIVE" || project.deletedAt)
-          fail("项目已停用");
-        const sales = await tx.user.findFirst({
-          where: {
-            id: d.salesUserId,
-            deletedAt: null,
-            status: "ACTIVE",
-            role: { in: ["SALES", "SALES_COMPANY_ADMIN"] },
-          },
-        });
-        if (!sales?.salesCompanyId)
-          throw new ConflictException("请选择有效的销售账号");
-        if (!internal(a)) {
-          demand(sales.salesCompanyId === a.salesCompanyId);
-          if (a.role === "SALES") demand(sales.id === a.id);
+        let draft: any;
+        if (draftId) {
+          const before = await this.access.get(a, "orders", draftId, tx);
+          if (parsed.unitId || before.unitId)
+            await lock(tx, "units", parsed.unitId || before.unitId);
+          await lock(tx, "orders", draftId);
+          draft = await this.access.get(a, "orders", draftId, tx);
+          if (draft.status !== "DRAFT" || draft.revision !== revision)
+            throw new ConflictException("订单已更新，请刷新");
         }
-        const company = await tx.salesCompany.findUnique({
-          where: { id: sales.salesCompanyId },
-        });
-        if (
-          !company ||
-          company.status !== "ACTIVE" ||
-          company.deletedAt ||
-          (company.serviceEndsOn &&
-            company.serviceEndsOn.getTime() + 86400000 < Date.now())
-        )
-          fail("销售公司服务已到期或停用");
-        await this.checkOccupancy(tx, u.id, d.startsOn, d.endsOn);
-        if (
-          plusMonths(d.startsOn, u.minLeaseMonths).getTime() - 86400000 >
-          d.endsOn.getTime()
-        )
-          fail("租期未达到单位最短租期");
-        let o = await insert(
-          tx,
-          "orders",
-          {
-            ...orderData,
-            projectId: u.projectId,
-            salesCompanyId: sales.salesCompanyId,
-            orderNo: serial("R"),
-            tenantSnapshot: {
-              name: d.tenantName,
-              phone: d.tenantPhone,
-              email: d.tenantEmail,
+        const d: any = {
+          tenantType: "COMPANY",
+          depositPlan: "ONE_ONE",
+          paymentIntervalMonths: 1,
+          firstPeriodProration: true,
+          lastPeriodProration: true,
+          ...draft,
+          ...parsed,
+        };
+        d.depositPlan ??= "ONE_ONE";
+        d.startsOn ??= new Date(new Date().toISOString().slice(0, 10));
+        d.endsOn ??= new Date(plusMonths(d.startsOn, 12).getTime() - 86400000);
+        d.rentDueDay ??= d.startsOn.getUTCDate();
+        d.paymentIntervalMonths = 1;
+        if (d.startsOn > d.endsOn || d.endsOn >= plusMonths(d.startsOn, 600))
+          fail("请检查租期范围（最多 600 个月）");
+        let unit: any = null,
+          project: any = null,
+          sales: any = null;
+        if (d.unitId) {
+          await lock(tx, "units", d.unitId);
+          unit = await this.access.get(a, "units", d.unitId, tx);
+          project = await this.access.get(a, "projects", unit.projectId, tx);
+          if (!unit.enabled || project.status !== "ACTIVE")
+            fail("项目或单位已停用");
+          d.projectId = unit.projectId;
+          d.monthlyRent ??= unit.referenceRent?.toString();
+        } else if (d.projectId)
+          project = await this.access.get(a, "projects", d.projectId, tx);
+        if (d.salesUserId) {
+          sales = await tx.user.findFirst({
+            where: {
+              id: d.salesUserId,
+              deletedAt: null,
+              status: "ACTIVE",
+              role: { in: ["SALES", "SALES_COMPANY_ADMIN"] },
             },
-            unitSnapshot: plain({
-              unitNo: u.unitNo,
-              area: u.area,
-              layout: u.layout,
-              projectName: project!.name,
-            }),
-            salesSnapshot: {
-              name: sales.name,
-              companyId: sales.salesCompanyId,
-            },
-            status: "PENDING",
-            occupancyState: "LOCKED",
-          },
-          a,
-        );
-        if (number(o.depositAmount).gt(0))
-          await insert(
-            tx,
-            "incomes",
-            {
-              recordNo: serial("B"),
-              recordType: "RECEIVABLE",
-              orderId: o.id,
-              projectId: o.projectId,
-              unitId: o.unitId,
-              feeType: "DEPOSIT",
-              amount: o.depositAmount,
-              dueOn: o.startsOn,
-              payerName: o.tenantName,
-              payerEmail: o.tenantEmail,
-              status: "OPEN",
-              sourceKey: `deposit:${o.id}`,
-            },
+          });
+          if (!sales?.salesCompanyId) fail("请选择有效的销售账号");
+          if (d.salesCompanyId && d.salesCompanyId !== sales!.salesCompanyId)
+            fail("销售员工不属于所选公司");
+          d.salesCompanyId = sales!.salesCompanyId!;
+        }
+        if (d.salesCompanyId) {
+          const company = await this.access.get(
             a,
+            "sales-companies",
+            d.salesCompanyId,
+            tx,
           );
-        const b = await this.billing.bill(tx, o, o.startsOn, a);
-        o = await update(
-          tx,
-          "orders",
-          o,
-          { nextBillOn: b.next <= o.endsOn ? b.next : null },
-          a,
-          "生成首期应收",
-        );
-        await this.saveOrderCommission(tx, a, o, commission);
-        await this.receipts.initial(tx, a, o);
-        return o;
+          if (
+            company.status !== "ACTIVE" ||
+            (company.serviceEndsOn &&
+              company.serviceEndsOn.getTime() + 86400000 < Date.now())
+          )
+            fail("销售公司服务已到期或停用");
+        }
+        const months =
+          { ONE_ONE: 1, TWO_ONE: 2, THREE_ONE: 3 }[d.depositPlan as string] ??
+          1;
+        d.depositAmount ??=
+          d.monthlyRent != null
+            ? number(d.monthlyRent).mul(months).toFixed(2)
+            : null;
+        const ready = !!unit && number(d.monthlyRent).gt(0);
+        if (ready) {
+          await this.checkOccupancy(tx, unit.id, d.startsOn, d.endsOn, draftId);
+          if (
+            plusMonths(d.startsOn, unit.minLeaseMonths).getTime() - 86400000 >
+            d.endsOn.getTime()
+          )
+            fail("租期未达到单位最短租期");
+          validateDepositPlan(d);
+        }
+        const commission = parsed.commission ?? draft?.commissionDraft;
+        const payment: any = d.initialPayment ?? {
+          paid: false,
+          rentPaid: false,
+          depositPaid: false,
+          rentReceived: "0",
+          depositReceived: "0",
+        };
+        if (payment.paid && !ready) fail("请先补充单位和月租，再登记实际收款");
+        if (payment.paid) {
+          payment.receivedOn ??= new Date().toISOString().slice(0, 10);
+          payment.paymentMethod ??= "BANK";
+          await defaultInitialAccount(tx, payment);
+        }
+        validateOrderDetails({ ...d, initialPayment: payment });
+        const fields: any = {};
+        for (const key of Object.keys(OrdersSchema.shape))
+          if (key !== "commission" && d[key] !== undefined)
+            fields[key] = d[key];
+        Object.assign(fields, {
+          projectId: d.projectId ?? null,
+          unitId: d.unitId ?? null,
+          salesCompanyId: d.salesCompanyId ?? null,
+          salesUserId: d.salesUserId ?? null,
+          monthlyRent: d.monthlyRent ?? null,
+          depositAmount: d.depositAmount,
+          initialPayment: plain(payment),
+          commissionDraft: plain(commission ?? {}),
+          billingVersion: 2,
+          status: ready ? "PENDING" : "DRAFT",
+          occupancyState: ready ? "OCCUPIED" : "RELEASED",
+          nextBillOn: null,
+          tenantSnapshot: plain({
+            name: d.tenantName,
+            phone: d.tenantPhone,
+            email: d.tenantEmail,
+          }),
+          unitSnapshot: unit
+            ? plain({
+                unitNo: unit.unitNo,
+                area: unit.area,
+                layout: unit.layout,
+                projectName: project.name,
+              })
+            : {},
+          salesSnapshot: sales
+            ? { name: sales.name, companyId: sales.salesCompanyId }
+            : {},
+        });
+        const order = draft
+          ? await update(
+              tx,
+              "orders",
+              draft,
+              fields,
+              a,
+              reason || "完善订单资料",
+            )
+          : await insert(tx, "orders", { ...fields, orderNo: serial("R") }, a);
+        if (ready) {
+          if (number(order.depositAmount).gt(0))
+            await insert(
+              tx,
+              "incomes",
+              {
+                recordNo: serial("B"),
+                recordType: "RECEIVABLE",
+                orderId: order.id,
+                projectId: order.projectId,
+                unitId: order.unitId,
+                feeType: "DEPOSIT",
+                amount: order.depositAmount,
+                currency: "HKD",
+                dueOn: order.startsOn,
+                payerName: order.tenantName,
+                payerEmail: order.tenantEmail,
+                status: "OPEN",
+                sourceKey: `deposit:${order.id}`,
+              },
+              a,
+            );
+          await this.billing.fullTerm(tx, order, a);
+          await this.saveOrderCommission(tx, a, order, commission);
+          await this.receipts.initial(tx, a, order);
+        }
+        return tx.order.findUniqueOrThrow({ where: { id: order.id } });
       },
-      { timeout: 15000 },
+      { timeout: 30000 },
     );
   }
   async checkOccupancy(
@@ -364,11 +448,16 @@ export class OrderLifecycleService {
   }
   async editOrder(a: Actor, key: string, body: any) {
     this.access.allow(a, "orders", true);
+    const current = await this.access.get(a, "orders", key);
+    if (current.status === "DRAFT") return this.saveDraftOrNew(a, body, key);
     const { revision, reason, ...rest } = z
-      .object({ revision: z.number().int(), reason: z.string().min(1) })
+      .object({
+        revision: z.number().int(),
+        reason: z.string().default("修改订单资料"),
+      })
       .passthrough()
       .parse(body);
-    const d = OrdersSchema.omit({ unitId: true, salesUserId: true })
+    const d = OrdersSchema.omit({ unitId: true, projectId: true })
       .extend({
         registrationNoType: OrdersSchema.shape.registrationNoType.nullable(),
         depositPlan: OrdersSchema.shape.depositPlan.nullable(),
@@ -378,86 +467,261 @@ export class OrderLifecycleService {
       .strict()
       .parse(rest);
     const { commission: submittedCommission, ...changes } = d;
-    return this.db.$transaction(async (tx) => {
-      let commission = submittedCommission;
-      let o = await this.access.get(a, "orders", key, tx);
-      await lock(tx, "units", o.unitId);
-      await lock(tx, "orders", key);
-      o = await this.access.get(a, "orders", key, tx);
-      if (o.revision !== revision)
-        throw new ConflictException("订单已更新，请刷新");
-      if (o.status === "CLOSED") fail("已关闭订单不能修改");
-      await defaultInitialAccount(tx, changes.initialPayment, o.currency);
-      if (!commission) {
-        const existing = await tx.commission.findMany({
-          where: { orderId: key, deletedAt: null, status: { not: "VOID" } },
-          orderBy: { periodStart: "asc" },
-        });
+    return this.db.$transaction(
+      async (tx) => {
+        let commission: any = submittedCommission;
+        let o = await this.access.get(a, "orders", key, tx);
+        await lock(tx, "units", o.unitId);
+        await lock(tx, "orders", key);
+        o = await this.access.get(a, "orders", key, tx);
+        if (o.revision !== revision)
+          throw new ConflictException("订单已更新，请刷新");
+        if (o.status === "CLOSED") fail("已关闭订单不能修改");
         if (
-          !existing.length ||
-          existing.some(
-            (c) =>
-              !c.mode ||
-              !c.dueOn ||
-              c.amount == null ||
-              number(c.amount).lte(0),
-          )
+          o.salesUserId &&
+          ((changes.salesUserId && changes.salesUserId !== o.salesUserId) ||
+            (changes.salesCompanyId &&
+              changes.salesCompanyId !== o.salesCompanyId))
         )
-          fail("请填写佣金结付方式、金额和结付日期");
-        if (
-          (changes.startsOn &&
-            changes.startsOn.getTime() !== o.startsOn.getTime()) ||
-          (changes.endsOn && changes.endsOn.getTime() !== o.endsOn.getTime())
-        ) {
-          const first = existing[0];
-          if (["ONE_TIME", "RECURRING_MONTHLY"].includes(first.mode))
-            commission = {
-              mode: first.mode as "ONE_TIME" | "RECURRING_MONTHLY",
-              dueOn: first.dueOn!,
-              amount: first.amount!.toString(),
-              remark: first.remark ?? undefined,
-            };
+          fail("已有销售归属的订单不能直接更换销售");
+        await defaultInitialAccount(tx, changes.initialPayment, o.currency);
+        if (!commission) {
+          const existing = await tx.commission.findMany({
+            where: { orderId: key, deletedAt: null, status: { not: "VOID" } },
+            orderBy: { periodStart: "asc" },
+          });
+          if (
+            (changes.startsOn &&
+              changes.startsOn.getTime() !== o.startsOn.getTime()) ||
+            (changes.endsOn && changes.endsOn.getTime() !== o.endsOn.getTime())
+          ) {
+            const first = existing[0];
+            if (first && ["ONE_TIME", "RECURRING_MONTHLY"].includes(first.mode))
+              commission = {
+                mode: first.mode as "ONE_TIME" | "RECURRING_MONTHLY",
+                dueOn: first.dueOn!,
+                amount: first.amount!.toString(),
+                remark: first.remark ?? undefined,
+              };
+          }
         }
-      }
-      const billIds = await tx.income.findMany({
-        where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
-        select: { id: true },
-      });
-      const hasReceipts = !!(await tx.income.count({
-        where: {
-          parentId: { in: billIds.map((x) => x.id) },
-          recordType: "RECEIPT",
-          deletedAt: null,
-          status: { in: ["PENDING", "CONFIRMED"] },
-        },
-      }));
-      if (
-        o.status !== "PENDING" ||
-        o.occupancyState === "OCCUPIED" ||
-        hasReceipts
-      ) {
-        const allowed = new Set([
-          "tenantPhone",
-          "tenantEmail",
-          "tenantContactName",
-          "remark",
-        ]);
-        if (Object.keys(changes).some((field) => !allowed.has(field)))
-          fail("已有收款或租期已生效，仅能修改联系方式和备注");
-        await this.saveOrderCommission(tx, a, o, commission, reason);
-        return update(
+        commission ??= o.commissionDraft;
+        const billIds = await tx.income.findMany({
+          where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
+          select: { id: true },
+        });
+        const hasReceipts = !!(await tx.income.count({
+          where: {
+            parentId: { in: billIds.map((x) => x.id) },
+            recordType: "RECEIPT",
+            deletedAt: null,
+            status: { in: ["PENDING", "CONFIRMED"] },
+          },
+        }));
+        if (o.status !== "PENDING" || hasReceipts) {
+          const allowed = new Set([
+            "tenantPhone",
+            "tenantEmail",
+            "tenantContactName",
+            "remark",
+          ]);
+          if (!o.salesUserId && changes.salesUserId) {
+            const sales = await tx.user.findFirst({
+              where: {
+                id: changes.salesUserId,
+                deletedAt: null,
+                status: "ACTIVE",
+                role: { in: ["SALES", "SALES_COMPANY_ADMIN"] },
+              },
+            });
+            if (!sales?.salesCompanyId) fail("请选择有效的销售账号");
+            changes.salesCompanyId = sales!.salesCompanyId!;
+            allowed.add("salesUserId");
+            allowed.add("salesCompanyId");
+          }
+          if (Object.keys(changes).some((field) => !allowed.has(field)))
+            fail("已有收款或租期已生效，仅能修改联系方式和备注");
+          await this.saveOrderCommission(
+            tx,
+            a,
+            { ...o, ...changes },
+            commission,
+            reason,
+          );
+          return update(
+            tx,
+            "orders",
+            o,
+            {
+              ...changes,
+              ...(submittedCommission
+                ? { commissionDraft: plain(submittedCommission) }
+                : {}),
+              ...(changes.tenantPhone !== undefined ||
+              changes.tenantEmail !== undefined
+                ? {
+                    tenantSnapshot: {
+                      name: o.tenantName,
+                      phone: changes.tenantPhone ?? o.tenantPhone,
+                      email: changes.tenantEmail ?? o.tenantEmail,
+                    },
+                  }
+                : {}),
+            },
+            a,
+            reason,
+          );
+        }
+        if (changes.salesUserId) {
+          const sales = await tx.user.findFirst({
+            where: {
+              id: changes.salesUserId,
+              deletedAt: null,
+              status: "ACTIVE",
+              role: { in: ["SALES", "SALES_COMPANY_ADMIN"] },
+            },
+          });
+          if (!sales?.salesCompanyId) fail("请选择有效的销售账号");
+          if (
+            changes.salesCompanyId &&
+            changes.salesCompanyId !== sales!.salesCompanyId
+          )
+            fail("销售员工不属于所选公司");
+          changes.salesCompanyId = sales!.salesCompanyId!;
+        }
+        if (changes.salesCompanyId)
+          await this.access.get(
+            a,
+            "sales-companies",
+            changes.salesCompanyId,
+            tx,
+          );
+        const next = { ...o, ...changes };
+        if (o.billingVersion === 2 && next.paymentIntervalMonths !== 1)
+          fail("新订单按月生成账单，付款频率应为每月");
+        if (next.endsOn >= plusMonths(next.startsOn, 600))
+          fail("租期最多支持 600 个月");
+        if (next.startsOn > next.endsOn) fail("租期无效");
+        if (number(next.monthlyRent).lte(0)) fail("租金必须大于零");
+        if (commission?.amount != null && number(commission.amount).lte(0))
+          fail("佣金金额必须大于零");
+        if (
+          [
+            "monthlyRent",
+            "depositAmount",
+            "depositPlan",
+            "paymentIntervalMonths",
+          ].some((key) => key in changes)
+        )
+          validateDepositPlan(next);
+        const unit = await this.access.get(a, "units", o.unitId, tx);
+        if (
+          plusMonths(next.startsOn, unit.minLeaseMonths).getTime() - 86400000 >
+          next.endsOn.getTime()
+        )
+          fail("租期未达到单位最短租期");
+        validateOrderDetails(next);
+        const rentChanged =
+          [
+            "startsOn",
+            "endsOn",
+            "paymentIntervalMonths",
+            "rentDueDay",
+            "firstPeriodProration",
+            "lastPeriodProration",
+          ].some(
+            (field) =>
+              JSON.stringify(plain((o as any)[field])) !==
+              JSON.stringify(plain((next as any)[field])),
+          ) || !number(o.monthlyRent).eq(next.monthlyRent);
+        const depositChanged =
+          !number(o.depositAmount).eq(next.depositAmount) ||
+          o.startsOn.getTime() !== next.startsOn.getTime();
+        let nextBillOn = o.nextBillOn;
+        if (rentChanged || depositChanged) {
+          const oldBills = await tx.income.findMany({
+            where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
+          });
+          if (
+            await tx.income.count({
+              where: {
+                parentId: { in: oldBills.map((x) => x.id) },
+                deletedAt: null,
+                status: { in: ["PENDING", "CONFIRMED"] },
+              },
+            })
+          )
+            fail("已有收款，不能直接修改租约");
+          for (const bill of oldBills.filter(
+            (x) =>
+              (rentChanged && x.sourceKey?.startsWith(`rent:${key}:`)) ||
+              (depositChanged && x.sourceKey === `deposit:${key}`),
+          )) {
+            await lock(tx, "incomes", bill.id);
+            await update(
+              tx,
+              "incomes",
+              bill,
+              { status: "VOID", sourceKey: null },
+              a,
+              "修改租约，重建未收款账单",
+            );
+          }
+          if (depositChanged && number(next.depositAmount).gt(0))
+            await insert(
+              tx,
+              "incomes",
+              {
+                recordNo: serial("B"),
+                recordType: "RECEIVABLE",
+                orderId: key,
+                projectId: o.projectId,
+                unitId: o.unitId,
+                feeType: "DEPOSIT",
+                amount: next.depositAmount,
+                currency: o.currency,
+                dueOn: next.startsOn,
+                payerName: next.tenantName,
+                payerEmail: next.tenantEmail,
+                status: "OPEN",
+                sourceKey: `deposit:${key}`,
+              },
+              a,
+            );
+          if (rentChanged) {
+            await this.billing.fullTerm(tx, next, a);
+            nextBillOn = null;
+          }
+        }
+
+        await this.checkOccupancy(
+          tx,
+          o.unitId,
+          next.startsOn,
+          next.endsOn,
+          o.id,
+        );
+        const tenantChanged =
+          changes.tenantName !== undefined ||
+          changes.tenantPhone !== undefined ||
+          changes.tenantEmail !== undefined;
+        await this.saveOrderCommission(tx, a, next, commission, reason);
+        const saved = await update(
           tx,
           "orders",
           o,
           {
             ...changes,
-            ...(changes.tenantPhone !== undefined ||
-            changes.tenantEmail !== undefined
+            ...(submittedCommission
+              ? { commissionDraft: plain(submittedCommission) }
+              : {}),
+            nextBillOn,
+            ...(tenantChanged
               ? {
                   tenantSnapshot: {
-                    name: o.tenantName,
-                    phone: changes.tenantPhone ?? o.tenantPhone,
-                    email: changes.tenantEmail ?? o.tenantEmail,
+                    name: next.tenantName,
+                    phone: next.tenantPhone,
+                    email: next.tenantEmail,
                   },
                 }
               : {}),
@@ -465,130 +729,11 @@ export class OrderLifecycleService {
           a,
           reason,
         );
-      }
-      const next = { ...o, ...changes };
-      if (next.startsOn > next.endsOn) fail("租期无效");
-      if (number(next.monthlyRent).lte(0)) fail("租金必须大于零");
-      if (commission && number(commission.amount).lte(0))
-        fail("佣金金额必须大于零");
-      if (
-        [
-          "monthlyRent",
-          "depositAmount",
-          "depositPlan",
-          "paymentIntervalMonths",
-        ].some((key) => key in changes)
-      )
-        validateDepositPlan(next);
-      const unit = await this.access.get(a, "units", o.unitId, tx);
-      if (
-        plusMonths(next.startsOn, unit.minLeaseMonths).getTime() - 86400000 >
-        next.endsOn.getTime()
-      )
-        fail("租期未达到单位最短租期");
-      validateOrderDetails(next);
-      const rentChanged =
-        [
-          "startsOn",
-          "endsOn",
-          "paymentIntervalMonths",
-          "rentDueDay",
-          "firstPeriodProration",
-          "lastPeriodProration",
-        ].some(
-          (field) =>
-            JSON.stringify(plain((o as any)[field])) !==
-            JSON.stringify(plain((next as any)[field])),
-        ) || !number(o.monthlyRent).eq(next.monthlyRent);
-      const depositChanged =
-        !number(o.depositAmount).eq(next.depositAmount) ||
-        o.startsOn.getTime() !== next.startsOn.getTime();
-      let nextBillOn = o.nextBillOn;
-      if (rentChanged || depositChanged) {
-        const oldBills = await tx.income.findMany({
-          where: { orderId: key, recordType: "RECEIVABLE", deletedAt: null },
-        });
-        if (
-          await tx.income.count({
-            where: {
-              parentId: { in: oldBills.map((x) => x.id) },
-              deletedAt: null,
-              status: { in: ["PENDING", "CONFIRMED"] },
-            },
-          })
-        )
-          fail("已有收款，不能直接修改租约");
-        for (const bill of oldBills.filter(
-          (x) =>
-            (rentChanged && x.sourceKey?.startsWith(`rent:${key}:`)) ||
-            (depositChanged && x.sourceKey === `deposit:${key}`),
-        )) {
-          await lock(tx, "incomes", bill.id);
-          await update(
-            tx,
-            "incomes",
-            bill,
-            { status: "VOID", sourceKey: null },
-            a,
-            "修改租约，重建未收款账单",
-          );
-        }
-        if (depositChanged && number(next.depositAmount).gt(0))
-          await insert(
-            tx,
-            "incomes",
-            {
-              recordNo: serial("B"),
-              recordType: "RECEIVABLE",
-              orderId: key,
-              projectId: o.projectId,
-              unitId: o.unitId,
-              feeType: "DEPOSIT",
-              amount: next.depositAmount,
-              currency: o.currency,
-              dueOn: next.startsOn,
-              payerName: next.tenantName,
-              payerEmail: next.tenantEmail,
-              status: "OPEN",
-              sourceKey: `deposit:${key}`,
-            },
-            a,
-          );
-        if (rentChanged) {
-          const bill = await this.billing.bill(tx, next, next.startsOn, a);
-          nextBillOn = bill.next <= next.endsOn ? bill.next : null;
-        }
-      }
-
-      await this.checkOccupancy(tx, o.unitId, next.startsOn, next.endsOn, o.id);
-      const tenantChanged =
-        changes.tenantName !== undefined ||
-        changes.tenantPhone !== undefined ||
-        changes.tenantEmail !== undefined;
-      await this.saveOrderCommission(tx, a, next, commission, reason);
-      const saved = await update(
-        tx,
-        "orders",
-        o,
-        {
-          ...changes,
-          nextBillOn,
-          ...(tenantChanged
-            ? {
-                tenantSnapshot: {
-                  name: next.tenantName,
-                  phone: next.tenantPhone,
-                  email: next.tenantEmail,
-                },
-              }
-            : {}),
-        },
-        a,
-        reason,
-      );
-      if (changes.initialPayment) await this.receipts.initial(tx, a, saved);
-      return saved;
-    });
+        if (changes.initialPayment) await this.receipts.initial(tx, a, saved);
+        return saved;
+      },
+      { timeout: 30000 },
+    );
   }
   async terminate(a: Actor, key: string, body: any) {
     demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
@@ -869,8 +1014,7 @@ export class OrderLifecycleService {
       await lock(tx, "units", o.unitId);
       await lock(tx, "orders", key);
       const fresh = await this.access.get(a, "orders", key, tx);
-      if (fresh.status !== "PENDING" || fresh.occupancyState === "OCCUPIED")
-        fail("仅未登记收款的待确认订单可关闭");
+      if (fresh.status !== "PENDING") fail("仅未登记收款的待确认订单可关闭");
       const roots = await tx.income.findMany({
         where: { orderId: key, recordType: "RECEIVABLE" },
       });

@@ -36,6 +36,7 @@ export async function listOrderBills(
         currency: q.currency,
       };
       const and: any[] = [base, scope];
+      if (q.orderId) and.push({ orderId: q.orderId });
       if (q.projectId) and.push({ projectId: q.projectId });
       if (q.unitId) and.push({ unitId: q.unitId });
       if (q.feeType) and.push({ feeType: q.feeType });
@@ -96,12 +97,22 @@ export async function listOrderBills(
         }),
         tx.project.findMany({
           where: {
-            id: { in: [...new Set(orders.map((o: any) => o.projectId))] },
+            id: {
+              in: [
+                ...new Set(orders.map((o: any) => o.projectId).filter(Boolean)),
+              ],
+            },
           },
           select: { id: true, name: true },
         }),
         tx.unit.findMany({
-          where: { id: { in: [...new Set(orders.map((o: any) => o.unitId))] } },
+          where: {
+            id: {
+              in: [
+                ...new Set(orders.map((o: any) => o.unitId).filter(Boolean)),
+              ],
+            },
+          },
           select: { id: true, projectId: true, unitNo: true },
         }),
         tx.income.count({

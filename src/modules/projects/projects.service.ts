@@ -9,7 +9,7 @@ import { PrismaService } from "../../database/prisma.service";
 import { ProjectsSchema } from "./dto/projects.schema";
 import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
-import { number } from "../../common/utils/value";
+import { validateUnitType, unitTypeValues } from "./unit-type-values";
 import { projectUnitTypes } from "./project-unit-types";
 @Injectable()
 export class ProjectsService extends ResourceService {
@@ -38,19 +38,7 @@ export class ProjectsService extends ResourceService {
         new Set(names).size !== names.length
       )
         fail("项目单位类型名称或编码重复");
-      for (const v of data.typeConfigs) {
-        if (
-          !v.name?.trim() ||
-          [v.minArea, v.maxArea, v.minRent, v.maxRent].some((x) => x == null)
-        )
-          fail("请填写类型名称、面积范围和月租范围");
-        if (
-          number(v.minArea).lte(0) ||
-          number(v.minArea).gt(v.maxArea) ||
-          number(v.minRent).gt(v.maxRent)
-        )
-          fail("请检查单位类型的面积和月租范围");
-      }
+      for (const v of data.typeConfigs) validateUnitType(v);
       if (
         row &&
         (await tx.unit.count({
@@ -58,6 +46,20 @@ export class ProjectsService extends ResourceService {
         }))
       )
         fail("已有单位使用的类型不能删除，请保留类型");
+      if (row) {
+        const units = await tx.unit.findMany({ where: { projectId: row.id, deletedAt: null } });
+        const addresses = units.map((unit: any) => {
+          const type = data.typeConfigs.find((v: any) => v.code === unit.unitTypeCode);
+          return JSON.stringify([type.building, type.floor, unit.roomNo]);
+        });
+        if (new Set(addresses).size !== addresses.length) fail("调整类型后出现重复房号，请检查期/座和楼层");
+        for (const unit of units) {
+          const type = data.typeConfigs.find((v: any) => v.code === unit.unitTypeCode);
+          const values = unitTypeValues(type, unit.extra);
+          if (Object.entries(values).some(([key, value]) => JSON.stringify(value) !== JSON.stringify((unit as any)[key])))
+            await update(tx, "units", unit, values, a, "同步项目单位类型资料（成交价及订单快照不变）");
+        }
+      }
     }
   }
   async orderLogos(a: Actor, projectId: string, body: any) {
@@ -127,16 +129,8 @@ export class ProjectsService extends ResourceService {
       },
     });
     x.unitCount = units.length;
-    x.occupiedCount = new Set(
-      occupied
-        .filter((o) => o.occupancyState === "OCCUPIED")
-        .map((o) => o.unitId),
-    ).size;
-    x.lockedCount = new Set(
-      occupied
-        .filter((o) => o.occupancyState === "LOCKED")
-        .map((o) => o.unitId),
-    ).size;
+    x.occupiedCount = new Set(occupied.map((o) => o.unitId)).size;
+    x.lockedCount = 0;
     x.availableCount =
       units.length - new Set(occupied.map((o) => o.unitId)).size;
     const imageFilter = {

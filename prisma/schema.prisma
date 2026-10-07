@@ -142,10 +142,10 @@ model Order {
   deletedAt                 DateTime?
   deletedBy                 String?   @db.Char(36)
   orderNo                   String    @unique
-  projectId                 String    @db.Char(36)
-  unitId                    String    @db.Char(36)
-  salesCompanyId            String    @db.Char(36)
-  salesUserId               String    @db.Char(36)
+  projectId                 String?   @db.Char(36)
+  unitId                    String?   @db.Char(36)
+  salesCompanyId            String?   @db.Char(36)
+  salesUserId               String?   @db.Char(36)
   tenantType                String    @default("PERSON")
   tenantName                String
   registrationNoType        String?
@@ -155,8 +155,8 @@ model Order {
   tenantEmail               String?
   startsOn                  DateTime  @db.Date
   endsOn                    DateTime  @db.Date
-  monthlyRent               Decimal   @db.Decimal(18, 2)
-  depositAmount             Decimal   @db.Decimal(18, 2)
+  monthlyRent               Decimal?  @db.Decimal(18, 2)
+  depositAmount             Decimal?  @db.Decimal(18, 2)
   depositPlan               String?
   moveInOn                  DateTime? @db.Date
   initialPayment            Json      @default("{}")
@@ -169,7 +169,9 @@ model Order {
   nextBillOn                DateTime? @db.Date
   status                    String    @default("PENDING")
   firstPaymentRegisteredAt  DateTime?
-  occupancyState            String    @default("LOCKED")
+  occupancyState            String    @default("OCCUPIED")
+  commissionDraft           Json      @default("{}")
+  billingVersion            Int       @default(1)
   actualTerminationOn       DateTime? @db.Date
   handoverStatus            String    @default("PENDING")
   handedOverAt              DateTime?

@@ -141,6 +141,10 @@ async function main() {
         completionDate: new Date("2023-01-01"),
         facilities: ["会所", "健身室", "公共休息区", "24 小时安保"],
         salesCanViewExactRent: i === 1,
+        typeConfigs: ["apartment", "studio", "office"].map(code => ({
+          code, name: code, building: "A座", floor: "12", area: "38",
+          layout: "1室1厅", age: 3, minRent: "900", maxRent: "35000",
+        })),
       },
       a,
     );
@@ -219,6 +223,7 @@ async function main() {
       endsOn: "2027-09-30",
       monthlyRent: String(5400 + n * 400),
       depositAmount: String((5400 + n * 400) * 2),
+      depositPlan: "TWO_ONE",
       commission: { mode: "ONE_TIME", dueOn: "2026-11-05", amount: "1200" },
       paymentIntervalMonths: 1,
       rentDueDay: 1,

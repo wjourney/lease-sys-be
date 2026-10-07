@@ -88,7 +88,7 @@ export abstract class ResourceQueryService {
           deletedAt: null,
           status: { not: "CLOSED" },
           occupancyState:
-            q.status === "AVAILABLE" ? { not: "RELEASED" } : q.status,
+            { not: "RELEASED" },
         },
         select: { unitId: true },
       });

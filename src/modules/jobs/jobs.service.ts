@@ -38,7 +38,7 @@ export class JobsService {
         });
         // Catch up every due period before stopping the schedule at expiry.
         while (
-          current?.status === "ACTIVE" &&
+          current?.status === "ACTIVE" && !current.deletedAt &&
           current.nextBillOn &&
           current.nextBillOn <= current.endsOn
         ) {
@@ -52,7 +52,7 @@ export class JobsService {
             "租期结束补齐账单",
           );
         }
-        if (current?.status === "ACTIVE")
+        if (current?.status === "ACTIVE" && !current.deletedAt)
           await update(
             tx,
             "orders",
@@ -88,7 +88,7 @@ export class JobsService {
             },
           });
           while (
-            o?.status === "ACTIVE" &&
+            o?.status === "ACTIVE" && !o.deletedAt &&
             o.nextBillOn &&
             o.nextBillOn <= o.endsOn &&
             o.nextBillOn.getTime() - o.billLeadDays * 86400000 <=
@@ -136,7 +136,7 @@ export class JobsService {
           (root?.recurrenceRule as any)?.frequency === "MONTHLY"
             ? root?.nextGenerationOn
             : null;
-        while (root && next && next <= cutoff) {
+        while (root && !root.deletedAt && next && next <= cutoff) {
           const sourceKey = `recurring:${root.id}:${next.toISOString().slice(0, 10)}`;
           if (
             !(await tx.income.findUnique({

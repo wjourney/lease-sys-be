@@ -1,3 +1,4 @@
+import { billAmounts } from "../incomes/bill-query";
 import { orderSettlement } from "./order-settlement";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
@@ -17,6 +18,57 @@ export class OrderDetailService {
   ) {}
   async related(a: Actor, order: any) {
     const rights = capabilities(a);
+    if (order.status === "DRAFT") {
+      const materials = await this.db.material.findMany({
+        where: {
+          orderId: order.id,
+          deletedAt: null,
+          ...(await this.access.scope(a, "materials")),
+        },
+      });
+      return {
+        bills: [],
+        commissions: [],
+        rentRefunds: [],
+        materials: await Promise.all(
+          materials.map(async (m) => ({
+            ...(await this.access.output(a, "materials", m)),
+            originalName: m.originalName
+              ? normalizeUploadName(m.originalName)
+              : null,
+            downloadUrl: m.storageKey
+              ? `/api/v1/materials/${m.id}/download`
+              : null,
+          })),
+        ),
+        relatedOperations: [],
+        orderCommission: rights.write.includes("orders")
+          ? order.commissionDraft
+          : null,
+        firstPaymentStatus: "UNPAID",
+        deposit: {
+          state: "NOT_READY",
+          agreed: order.depositAmount,
+          received: "0",
+          pending: "0",
+          deduction: "0",
+          refunded: "0",
+          refundDue: "0",
+          held: "0",
+          refunds: [],
+        },
+        actions: {
+          edit: rights.write.includes("orders"),
+          editLease: rights.write.includes("orders"),
+          close: false,
+          moveIn: false,
+          terminate: false,
+          handover: false,
+          settle: false,
+          refund: false,
+        },
+      };
+    }
     // Authorize the order before using its child IDs; never accept child IDs from the client.
     const roots = await this.db.income.findMany({
       where: { orderId: order.id, recordType: "RECEIVABLE", deletedAt: null },
@@ -56,6 +108,7 @@ export class OrderDetailService {
         offset = number(root.depositOffsetAmount);
       return {
         ...plain(root),
+        ...billAmounts(root, { confirmed, pending }),
         operationLogs: undefined,
         receipts: children.map(({ operationLogs, ...r }) => ({
           ...plain(r),
@@ -109,9 +162,9 @@ export class OrderDetailService {
         : firstConfirmed.gt(0)
           ? "PARTIAL"
           : "UNPAID";
-    const hasPayments =
-      order.occupancyState === "OCCUPIED" ||
-      receipts.some((x) => ["PENDING", "CONFIRMED"].includes(x.status));
+    const hasPayments = receipts.some((x) =>
+      ["PENDING", "CONFIRMED"].includes(x.status),
+    );
     const materials = rights.read.includes("materials")
       ? await this.db.material.findMany({
           where: {
@@ -155,7 +208,7 @@ export class OrderDetailService {
                   amount: c.amount,
                   remark: c.remark,
                 })
-              : null;
+              : (order.commissionDraft ?? null);
           })()
         : null,
       commissions: await Promise.all(
@@ -236,9 +289,7 @@ export class OrderDetailService {
           order.status === "PENDING" &&
           !hasPayments,
         moveIn:
-          rights.manageOrders &&
-          order.status === "ACTIVE" &&
-          order.occupancyState === "LOCKED",
+          rights.manageOrders && order.status === "ACTIVE" && !order.moveInOn,
         terminate: rights.manageOrders && order.status === "ACTIVE",
         handover:
           rights.manageOrders &&

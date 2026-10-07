@@ -131,7 +131,8 @@ export class OrdersController {
   @Post() async create(@Req() r: any, @Body() body: any) {
     const created = await this.service.create(r.actor, body);
     try {
-      await this.contracts.ensure(r.actor, created.id);
+      if (created.status !== "DRAFT")
+        await this.contracts.ensure(r.actor, created.id);
     } catch (error) {
       this.logger.warn(
         `Order ${created.id} was created without a contract`,
@@ -141,7 +142,8 @@ export class OrdersController {
     const result = await this.service.detail(r.actor, created.id);
     return {
       ...result,
-      contractGenerationPending: !result.currentContractMaterialId,
+      contractGenerationPending:
+        result.status !== "DRAFT" && !result.currentContractMaterialId,
     };
   }
   @Patch(":id") async edit(
@@ -149,9 +151,9 @@ export class OrdersController {
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    await this.service.edit(r.actor, id, body);
+    const saved = await this.service.edit(r.actor, id, body);
     try {
-      await this.contracts.ensure(r.actor, id);
+      if (saved?.status !== "DRAFT") await this.contracts.ensure(r.actor, id);
     } catch (error) {
       this.logger.warn(
         `Order ${id} saved; contract generation needs retry`,
@@ -159,6 +161,12 @@ export class OrdersController {
       );
     }
     return this.service.detail(r.actor, id);
+  }
+  @Get(":id/deletion-preview") deletionPreview(
+    @Req() r: any,
+    @Param("id") id: string,
+  ) {
+    return this.service.deletionPreview(r.actor, id);
   }
   @Delete(":id") async remove(
     @Req() r: any,

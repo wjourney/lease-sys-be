@@ -99,11 +99,11 @@ export class CompanyCommissionsService {
             select: { id: true, name: true },
           }),
           tx.project.findMany({
-            where: { id: { in: orders.map((o) => o.projectId) } },
+            where: { id: { in: orders.map((o) => o.projectId).filter((id): id is string => !!id) } },
             select: { id: true, name: true },
           }),
           tx.unit.findMany({
-            where: { id: { in: orders.map((o) => o.unitId) } },
+            where: { id: { in: orders.map((o) => o.unitId).filter((id): id is string => !!id) } },
             select: { id: true, unitNo: true },
           }),
           tx.expense.findMany({
@@ -145,8 +145,8 @@ export class CompanyCommissionsService {
             orderNo: order.orderNo,
             salesUserId: c.salesUserId,
             salesName: userMap.get(c.salesUserId) || "历史员工",
-            projectName: projectMap.get(order.projectId),
-            unitNo: unitMap.get(order.unitId),
+            projectName: projectMap.get(order.projectId || ""),
+            unitNo: unitMap.get(order.unitId || ""),
             mode: c.mode,
             periodStart: c.periodStart,
             periodEnd: c.periodEnd,

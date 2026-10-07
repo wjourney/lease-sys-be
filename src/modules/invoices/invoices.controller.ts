@@ -1,3 +1,4 @@
+import { InvoiceBatchService } from "./invoice-batch.service";
 import {
   Body,
   Controller,
@@ -20,11 +21,25 @@ import { InvoicesService } from "./invoices.service";
 @Controller("invoices")
 export class InvoicesController {
   constructor(
+    @Inject(InvoiceBatchService) private batch: InvoiceBatchService,
     @Inject(InvoicesService) private service: InvoicesService,
     @Inject(InvoiceRenderService) private renderer: InvoiceRenderService,
     @Inject(InvoiceLifecycleService) private lifecycle: InvoiceLifecycleService,
     @Inject(InvoiceEmailService) private email: InvoiceEmailService,
   ) {}
+  @Post("batch-download") async batchDownload(
+    @Req() r: any,
+    @Body() body: unknown,
+    @Res() res: any,
+  ) {
+    const result = await this.batch.download(r.actor, body);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", 'attachment; filename="invoices.zip"');
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Invoice-Count", String(result.count));
+    res.setHeader("X-Invoice-Issues", String(result.issues));
+    res.send(result.zip);
+  }
   @Post(":id/render") render(@Req() r: any, @Param("id") key: string) {
     return this.renderer.render(r.actor, key);
   }

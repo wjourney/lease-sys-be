@@ -44,6 +44,7 @@ function fixture(rentReceived = "15000.00") {
         return receipt;
       },
     },
+    invoice: { create: async ({ data }: any) => data },
     order: { findUnique: async () => order },
   };
   const service = new ReceiptsService(
@@ -56,6 +57,8 @@ function fixture(rentReceived = "15000.00") {
     } as any,
     { checkAccount: async () => undefined } as any,
   );
+  // This fixture tests allocation; full balance/activation is covered in order-finance.test.
+  service.refresh = async () => undefined;
   return { actor, order, receipts, tx, service };
 }
 
@@ -65,8 +68,8 @@ test("paid declaration allows actual initial receipts below the calculated bill"
   assert.deepEqual(
     f.receipts.map((r) => [r.parentId, r.amount, r.status]),
     [
-      ["rent", "15000.00", "PENDING"],
-      ["deposit", "15000.00", "PENDING"],
+      ["rent", "15000.00", "CONFIRMED"],
+      ["deposit", "15000.00", "CONFIRMED"],
     ],
   );
   assert.equal(f.order.status, "PENDING");

@@ -60,7 +60,12 @@ export class ReceiptsService {
     const order = root.orderId
       ? await tx.order.findUnique({ where: { id: root.orderId } })
       : null;
-    if (order?.status === "CLOSED") fail("订单已关闭，不能继续登记收款");
+    if (
+      order?.deletedAt ||
+      order?.status === "DRAFT" ||
+      order?.status === "CLOSED"
+    )
+      fail("订单已关闭，不能继续登记收款");
     if (order?.depositSettledAt && root.feeType === "DEPOSIT")
       fail("押金已结算，不能继续登记收款");
     const sums = await this.balances.totals(tx, root.id);
@@ -80,7 +85,9 @@ export class ReceiptsService {
         unitId: root.unitId,
         feeType: root.feeType,
         currency: root.currency,
-        status: "PENDING",
+        status: "CONFIRMED",
+        confirmedBy: a.id,
+        confirmedAt: new Date(),
         ...(group
           ? {
               recurrenceRule: {
@@ -99,9 +106,36 @@ export class ReceiptsService {
         order,
         { firstPaymentRegisteredAt: new Date() },
         a,
-        "登记首笔付款，等待财务核对",
+        "首笔收款直接入账",
       );
+    await this.issueInvoice(tx, a, child, root);
+    await this.refresh(tx, a, root);
     return child;
+  }
+  private async issueInvoice(tx: any, a: Actor, receipt: any, root: any) {
+    await insert(
+      tx,
+      "invoices",
+      {
+        invoiceNo: serial("INV"),
+        incomeId: receipt.id,
+        amount: receipt.amount,
+        currency: receipt.currency,
+        issuedOn: new Date(),
+        snapshot: plain({
+          payerName: receipt.payerName || root.payerName,
+          payerEmail: root.payerEmail,
+          feeType: root.feeType,
+          orderId: root.orderId,
+          periodStart: root.periodStart,
+          periodEnd: root.periodEnd,
+          amount: receipt.amount,
+          recordNo: receipt.recordNo,
+          dueOn: root.dueOn,
+        }),
+      },
+      a,
+    );
   }
   async batch(a: Actor, orderId: string, body: any) {
     demand(!["SALES_COMPANY_ADMIN", "SALES"].includes(a.role));
@@ -164,6 +198,40 @@ export class ReceiptsService {
       { timeout: 15000 },
     );
   }
+  async batchBills(a: Actor, body: any) {
+    demand(["SUPER_ADMIN", "FINANCE", "OPERATIONS"].includes(a.role));
+    const input = z
+      .object({
+        entries: z
+          .array(ReceiptInput.extend({ billId: z.string().uuid() }))
+          .min(1)
+          .max(100),
+      })
+      .strict()
+      .parse(body);
+    if (
+      new Set(input.entries.map((e) => e.billId)).size !== input.entries.length
+    )
+      fail("同一账单不能重复选择");
+    const results: any[] = [];
+    for (const { billId, ...entry } of input.entries) {
+      try {
+        const receipt = await this.receipt(a, billId, {
+          ...entry,
+          receivedOn: entry.receivedOn.toISOString().slice(0, 10),
+        });
+        results.push({ id: billId, ok: true, receiptId: receipt.id });
+      } catch (error) {
+        results.push({
+          id: billId,
+          ok: false,
+          message:
+            error instanceof Error ? error.message : "操作失败，请稍后重试",
+        });
+      }
+    }
+    return { results };
+  }
   async initial(tx: any, a: Actor, order: any) {
     const p = order.initialPayment;
     if (!p?.paid) return;
@@ -189,8 +257,7 @@ export class ReceiptsService {
       const amount =
         p[bill.feeType === "DEPOSIT" ? "depositReceived" : "rentReceived"] ??
         "0";
-      // The declaration does not confirm settlement. Register the actual
-      // amount; finance confirmation and bill balances determine settlement.
+      // Initial receipts enter the account immediately, just like later receipts.
       if (number(amount).lte(0)) continue;
       const r = await this.register(
         tx,
@@ -203,7 +270,7 @@ export class ReceiptsService {
           paymentMethod: p.paymentMethod,
           bankReference: p.bankReference,
           payerName: order.tenantName,
-          sourceKey: `initial:${group}:${bill.id}`,
+          sourceKey: `initial:${order.id}:${order.revision}:${bill.id}`,
         },
         group,
         voucherIncomeId,
@@ -295,11 +362,7 @@ export class ReceiptsService {
       "incomes",
       root,
       {
-        status: sums.remaining.lte(0)
-          ? "PAID"
-          : sums.confirmed.add(sums.offset).gt(0)
-            ? "PARTIAL"
-            : "OPEN",
+        status: sums.remaining.lte(0) ? "PAID" : "OPEN",
       },
       a,
       "更新收款进度",

@@ -388,7 +388,7 @@ test("full workflow and authorization invariants", async (t) => {
     sales.csrf = token;
   });
   await t.test(
-    "receipt pending reserves balance and duplicate key is idempotent",
+    "receipt immediately settles balance and duplicate key is idempotent",
     async () => {
       const body = {
         amount: "1000",
@@ -412,12 +412,12 @@ test("full workflow and authorization invariants", async (t) => {
       );
       assert.equal(same.id, receipt.id);
       const detail = await sales.call("GET", "/incomes/" + root.id);
-      assert.equal(Number(detail.pending), 1000);
-      assert.equal(Number(detail.confirmed), 0);
+      assert.equal(Number(detail.pending), 0);
+      assert.equal(Number(detail.confirmed), 1000);
       await sales.call("POST", "/incomes/" + receipt.id + "/confirm", {}, 403);
     },
   );
-  await t.test("finance confirmation creates invoice once", async () => {
+  await t.test("direct receipt creates one invoice and confirmation retries are idempotent", async () => {
     await finance.call("POST", "/incomes/" + receipt.id + "/confirm", {}, 201);
     await finance.call("POST", "/incomes/" + receipt.id + "/confirm", {}, 201);
     const invs = await finance.call("GET", "/invoices?incomeId=" + receipt.id);
@@ -426,7 +426,7 @@ test("full workflow and authorization invariants", async (t) => {
     const detail = await finance.call("GET", "/incomes/" + root.id);
     assert.equal(Number(detail.confirmed), 1000);
     assert.equal(Number(detail.pending), 0);
-    assert.equal(detail.status, "PARTIAL");
+    assert.equal(detail.status, "OPEN");
     await other.call("GET", "/invoices/" + invoice.id, undefined, 404);
   });
   await t.test(
@@ -481,7 +481,7 @@ test("full workflow and authorization invariants", async (t) => {
       const pending = results.find((x) => x.status === 201)!.body;
       await finance.call(
         "POST",
-        "/incomes/" + pending.id + "/reject",
+        "/incomes/" + pending.id + "/reverse",
         { reason: "凭证需重新提交" },
         201,
       );
@@ -698,7 +698,7 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "测试项目-" + randomUUID().slice(0, 5),
-          typeConfigs: [{ code: "LARGE", name: "大单位", minArea: "30", maxArea: "80", minRent: "1000", maxRent: "20000" }],
+          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000" }],
           region: "九龙",
           address: "测试地址",
           propertyName: "测试物业",
@@ -773,10 +773,9 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "Logo 编辑测试-" + randomUUID().slice(0, 5),
-          typeConfigs: [{ code: "LARGE", name: "大单位", minArea: "30", maxArea: "80", minRent: "1000", maxRent: "20000" }],
+          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000" }],
           region: "港岛",
           address: "测试地址",
-          completionDate: "2023-01-01",
           longitude: 114.1694,
         },
         201,
@@ -789,7 +788,6 @@ test("full workflow and authorization invariants", async (t) => {
       );
       const edited = await admin.call("PATCH", `/projects/${project.id}`, {
         revision: project.revision,
-        completionDate: null,
         longitude: null,
       });
       assert.equal(edited.code, project.code);
@@ -959,10 +957,10 @@ test("full workflow and authorization invariants", async (t) => {
     const existing = await admin.call("GET", `/units/${order.unitId}`);
     const body = {
       projectId: existing.projectId,
-      unitNo: `价格校验-${randomUUID().slice(0, 8)}`,
+      roomNo: `价格校验-${randomUUID().slice(0, 8)}`,
       unitTypeCode: existing.unitTypeCode,
       area: "38",
-      referenceRent: "2222",
+      referenceRent: "899",
       minRent: "12122",
       maxRent: "33434",
       minLeaseMonths: 12,
@@ -974,7 +972,7 @@ test("full workflow and authorization invariants", async (t) => {
       },
     };
     const rejected = await admin.call("POST", "/units", body, 400);
-    assert.equal(rejected.message, "参考月租须介于最低价和最高价之间");
+    assert.equal(rejected.message, "月租价格须介于单位类型的最低价和最高价之间");
     const created = await admin.call(
       "POST",
       "/units",
@@ -982,6 +980,9 @@ test("full workflow and authorization invariants", async (t) => {
       201,
     );
     assert.equal(created.extra.phase, "A座");
+    assert.equal(Number(created.minRent), 900);
+    assert.equal(Number(created.maxRent), 35000);
+    assert.equal(created.floor, "12");
     await admin.call("DELETE", `/units/${created.id}`, {
       reason: "价格校验测试完成",
     });
@@ -993,7 +994,7 @@ test("full workflow and authorization invariants", async (t) => {
       "/units",
       {
         projectId: existing.projectId,
-        unitNo: `新订单-${randomUUID().slice(0, 8)}`,
+        roomNo: `新订单-${randomUUID().slice(0, 8)}`,
         unitTypeCode: existing.unitTypeCode,
         area: "38",
         referenceRent: "5800",
@@ -1045,23 +1046,7 @@ test("full workflow and authorization invariants", async (t) => {
     }, 400);
     await admin.call("POST", "/orders", {
       ...body,
-      commission: { ...body.commission, dueOn: undefined },
-    }, 400);
-    await admin.call("POST", "/orders", {
-      ...body,
-      commission: undefined,
-    }, 400);
-    await admin.call("POST", "/orders", {
-      ...body,
-      commission: { amount: "0" },
-    }, 400);
-    await admin.call("POST", "/orders", {
-      ...body,
-      initialPayment: {
-        ...body.initialPayment,
-        paymentState: "PAID",
-        receivedOn: "2026-10-28",
-      },
+      commission: { ...body.commission, amount: "-1" },
     }, 400);
     const created = await admin.call("POST", "/orders", body, 201);
     assert.ok(created.currentContractMaterialId);
@@ -1083,10 +1068,10 @@ test("full workflow and authorization invariants", async (t) => {
     await other.call("POST", `/orders/${created.id}/contract/ensure`, undefined, 404);
     let detail = await admin.call("GET", `/orders/${created.id}`);
     assert.equal(detail.actions.editLease,false);
-    assert.equal(detail.occupancyState,"LOCKED");
+    assert.equal(detail.occupancyState,"OCCUPIED");
     const initialReceipts=detail.bills.flatMap((b:any)=>b.receipts);
     assert.equal(initialReceipts.length,1);
-    for(const r of initialReceipts) await finance.call("POST",`/incomes/${r.id}/reject`,{reason:"金额需重新登记"},201);
+    for(const r of initialReceipts) await finance.call("POST",`/incomes/${r.id}/reverse`,{reason:"金额需重新登记"},201);
     detail=await admin.call("GET",`/orders/${created.id}`);
     assert.equal(detail.actions.editLease,true);
     assert.equal(detail.actions.close,true);
@@ -1160,7 +1145,7 @@ test("full workflow and authorization invariants", async (t) => {
       "/units",
       {
         projectId: template.projectId,
-        unitNo: `月结佣金-${randomUUID().slice(0, 8)}`,
+        roomNo: `月结佣金-${randomUUID().slice(0, 8)}`,
         unitTypeCode: template.unitTypeCode,
         area: "38",
         referenceRent: "5800",
@@ -1425,7 +1410,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       "/units",
       {
         projectId: template.projectId,
-        unitNo: `押金流程-${randomUUID().slice(0, 8)}`,
+        roomNo: `押金流程-${randomUUID().slice(0, 8)}`,
         unitTypeCode: template.unitTypeCode,
         area: "38",
         referenceRent: "1000",
@@ -1447,6 +1432,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         endsOn: "2026-11-30",
         monthlyRent: "1000",
         depositAmount,
+        depositPlan: "OTHER",
         commission: { mode: "ONE_TIME", dueOn: "2026-11-10", amount: "100" },
       },
       201,

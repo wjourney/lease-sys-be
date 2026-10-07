@@ -8,15 +8,14 @@ import { projectUnitTypes } from "../src/modules/projects/project-unit-types";
 const type = {
   code: "LARGE",
   name: "大单位",
-  minArea: "40",
-  maxArea: "80",
+  building: "A座", floor: "12", area: "48", layout: "两房", age: 5,
   minRent: "10000",
   maxRent: "20000",
 };
 const project: any = { id: "project", typeConfigs: [type] };
 const tx: any = {
   $queryRawUnsafe: async () => [],
-  unit: { findMany: async () => [], count: async () => 0 },
+  unit: { findMany: async () => [], count: async () => 0, findFirst: async () => null },
   systemSetting: {
     findUnique: async () => {
       throw new Error("New configuration must not consult global types");
@@ -38,9 +37,9 @@ test("project type validation rejects missing fields, invalid bounds and duplica
   for (const configs of [
     [],
     [{ ...type, name: "" }],
-    [{ ...type, maxArea: "20" }],
+    [{ ...type, area: "0" }],
     [{ ...type, maxRent: "1" }],
-    [{ ...type, minArea: "0" }],
+    [{ ...type, floor: "" }],
     [{ ...type, minRent: undefined }],
     [type, { ...type, code: "OTHER" }],
   ])
@@ -61,12 +60,15 @@ test("unit validation accepts only its own project types", async () => {
   const data = {
     projectId: "project",
     unitTypeCode: "LARGE",
-    area: "50",
+    roomNo: "1201", area: "999",
     minRent: "10000",
     maxRent: "20000",
     referenceRent: "15000",
   };
   await units.validate({}, data, tx);
+  assert.equal(data.area, "48");
+  assert.equal((data as any).floor, "12");
+  await assert.rejects(units.validate({}, { ...data, referenceRent: "999" }, tx));
   await assert.rejects(
     units.validate({}, { ...data, unitTypeCode: "ANOTHER_PROJECT_TYPE" }, tx),
   );

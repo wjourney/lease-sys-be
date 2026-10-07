@@ -43,6 +43,7 @@ export class ContractsService {
   }
   async ensure(a: Actor, key: string) {
     const o = await this.access.get(a, "orders", key);
+    if (o.status === "DRAFT") fail("请先完善租约资料，再生成合同");
     if (["SALES_COMPANY_ADMIN", "SALES"].includes(a.role)) {
       const current = o.currentContractMaterialId
         ? await this.db.material.findFirst({
@@ -85,6 +86,7 @@ export class ContractsService {
   }
   async download(a: Actor, key: string) {
     const o = await this.access.get(a, "orders", key);
+    if (o.status === "DRAFT") fail("请先完善租约资料，再生成合同");
     const m = o.currentContractMaterialId
       ? await this.db.material.findFirst({
           where: {
@@ -106,6 +108,7 @@ export class ContractsService {
   }
   private async generate(a: Actor, key: string, templateId?: string) {
     const o = await this.access.get(a, "orders", key);
+    if (o.status === "DRAFT") fail("请先完善租约资料，再生成合同");
     let template: any = null;
     if (templateId) {
       template = await this.db.material.findFirst({
