@@ -1,5 +1,11 @@
+import { billInvoiceCounts } from "../invoices/bill-invoice-counts";
 import { Actor } from "../../common/auth/actor";
-import { BillQuery, billAmounts, billRegistration, summarizeBills } from "./bill-query";
+import {
+  BillQuery,
+  billAmounts,
+  billRegistration,
+  summarizeBills,
+} from "./bill-query";
 
 /** A consistent read model shared by the table and its unpaginated totals. */
 export async function listOrderBills(
@@ -155,18 +161,25 @@ export async function listOrderBills(
           a.recordNo.localeCompare(b.recordNo)
         );
       });
-      const items = rows
-        .slice((q.page - 1) * q.pageSize, q.page * q.pageSize)
-        .map((b: any) => {
-          const order = orderMap.get(b.orderId);
-          return {
-            ...b,
-            orderNo: order.orderNo,
-            projectName: projectMap.get(b.projectId),
-            unitNo: unitMap.get(b.unitId),
-            ...billRegistration(b, order),
-          };
-        });
+      const pageRows = rows.slice(
+        (q.page - 1) * q.pageSize,
+        q.page * q.pageSize,
+      );
+      const invoiceCounts = await billInvoiceCounts(
+        tx,
+        pageRows.filter((b: any) => b.status !== "VOID").map((b: any) => b.id),
+      );
+      const items = pageRows.map((b: any) => {
+        const order = orderMap.get(b.orderId);
+        return {
+          ...b,
+          orderNo: order.orderNo,
+          projectName: projectMap.get(b.projectId),
+          unitNo: unitMap.get(b.unitId),
+          ...billRegistration(b, order),
+          invoiceCount: invoiceCounts.get(b.id) || 0,
+        };
+      });
       return {
         items,
         total: rows.length,

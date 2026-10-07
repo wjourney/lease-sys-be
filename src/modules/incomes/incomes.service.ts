@@ -1,3 +1,4 @@
+import { billInvoiceCounts } from "../invoices/bill-invoice-counts";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
@@ -99,7 +100,17 @@ export class IncomesService extends ResourceService {
           orderId: result.orderId,
           orderNo: result.orderNo,
         }));
-      return { ...result, receipts, offsets, operations };
+      const counts = await billInvoiceCounts(
+        this.db,
+        result.status === "VOID" ? [] : [key],
+      );
+      return {
+        ...result,
+        receipts,
+        offsets,
+        operations,
+        invoiceCount: counts.get(key) || 0,
+      };
     }
     if (result.recordType !== "RECEIPT") return result;
     const group = result.recurrenceRule?.receiptGroupId;

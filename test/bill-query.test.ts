@@ -120,6 +120,7 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
     },
     income: {
       findMany: async (args: any) => {
+        if (args.where.recordType === "RECEIPT") return [];
         where = args.where;
         return roots;
       },
@@ -160,13 +161,32 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
 });
 
 test("receipt registration explains reserved balances without treating them as paid", () => {
-  const bill = { ...billAmounts({ amount: "100" }, { pending: "100" }), feeType: "RENT" };
+  const bill = {
+    ...billAmounts({ amount: "100" }, { pending: "100" }),
+    feeType: "RENT",
+  };
   assert.equal(bill.status, "OPEN");
-  assert.equal(billRegistration(bill, {status: "ACTIVE"}).canRegister, false);
-  assert.match(billRegistration(bill, {status: "ACTIVE"}).registrationBlockedReason!, /已有收款记录/);
-  const partlyReserved = {...bill, available: "40"};
-  assert.equal(billRegistration(partlyReserved, {status: "ACTIVE"}).canRegister, true);
-  assert.match(billRegistration(partlyReserved, {status: "CLOSED"}).registrationBlockedReason!, /订单已关闭/);
-  assert.match(billRegistration({...partlyReserved, feeType: "DEPOSIT"}, {status: "ACTIVE", depositSettledAt: new Date()}).registrationBlockedReason!, /押金已结算/);
+  assert.equal(billRegistration(bill, { status: "ACTIVE" }).canRegister, false);
+  assert.match(
+    billRegistration(bill, { status: "ACTIVE" }).registrationBlockedReason!,
+    /已有收款记录/,
+  );
+  const partlyReserved = { ...bill, available: "40" };
+  assert.equal(
+    billRegistration(partlyReserved, { status: "ACTIVE" }).canRegister,
+    true,
+  );
+  assert.match(
+    billRegistration(partlyReserved, { status: "CLOSED" })
+      .registrationBlockedReason!,
+    /订单已关闭/,
+  );
+  assert.match(
+    billRegistration(
+      { ...partlyReserved, feeType: "DEPOSIT" },
+      { status: "ACTIVE", depositSettledAt: new Date() },
+    ).registrationBlockedReason!,
+    /押金已结算/,
+  );
   assert.equal(billRegistration(partlyReserved, null).canRegister, false);
 });

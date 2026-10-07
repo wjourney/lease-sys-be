@@ -9,7 +9,7 @@ const actor: any = { id: randomUUID(), role: "SUPER_ADMIN" };
 const id = randomUUID(),
   empty = randomUUID(),
   denied = randomUUID();
-function harness() {
+function harness(count = 2, failSecond = true) {
   const rendered: string[] = [],
     checked: string[] = [];
   const db: any = {
@@ -29,7 +29,7 @@ function harness() {
           ? [
               { id: "i1", invoiceNo: "INV001" },
               { id: "i2", invoiceNo: "INV002" },
-            ]
+            ].slice(0, count)
           : [];
       },
     },
@@ -56,7 +56,8 @@ function harness() {
     {
       render: async (_: any, key: string) => {
         rendered.push(key);
-        if (key === "i2") throw new Error("private storage stack");
+        if (failSecond && key === "i2")
+          throw new Error("private storage stack");
         return { storageKey: "file", storageProvider: "LOCAL" };
       },
     } as any,
@@ -106,4 +107,24 @@ test("empty invoice selection provides an explicit result manifest without fabri
   const result = await service.download(actor, { billIds: [empty] });
   assert.equal(result.count, 0);
   assert.deepEqual(Object.keys(unzip(result.zip)), ["下载结果.txt"]);
+});
+
+test("single bill returns PDF for one invoice and ZIP for multiple complete invoices", async () => {
+  const one = await harness(1).service.downloadBill(actor, id);
+  assert.equal(one.contentType, "application/pdf");
+  assert.equal(one.filename, "B001_INV001.pdf");
+  assert.equal(one.data.toString(), "%PDF-mocked");
+  const many = await harness(2, false).service.downloadBill(actor, id);
+  assert.equal(many.contentType, "application/zip");
+  const files = unzip(many.data);
+  assert.equal(files["B001_INV001.pdf"], "%PDF-mocked");
+  assert.equal(files["B001_INV002.pdf"], "%PDF-mocked");
+});
+test("single bill refuses missing, unauthorized and incomplete invoice downloads", async () => {
+  for (const key of [empty, denied, "invalid"])
+    await assert.rejects(harness().service.downloadBill(actor, key));
+  await assert.rejects(harness().service.downloadBill(actor, id));
+  await assert.rejects(
+    harness(1).service.downloadBill({ ...actor, role: "SALES" }, id),
+  );
 });

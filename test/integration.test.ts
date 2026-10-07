@@ -644,6 +644,23 @@ test("full workflow and authorization invariants", async (t) => {
       await other.call("GET", "/materials/" + m.id, undefined, 404);
     },
   );
+  await t.test("bill invoice download returns a complete file with matching list and detail availability", async () => {
+    const detail = await finance.call("GET", "/incomes/" + root.id);
+    assert(detail.invoiceCount > 0);
+    const page = await finance.call("GET", "/incomes/bills?q=" + encodeURIComponent(root.recordNo));
+    assert.equal(page.items.find((bill: any) => bill.id === root.id).invoiceCount, detail.invoiceCount);
+    const result = await fetch(base + "/invoices/bills/" + root.id + "/download", {
+      method: "POST",
+      headers: { Cookie: finance.cookies, "X-CSRF-Token": finance.csrf },
+    });
+    assert.equal(result.status, 201);
+    const pdf = detail.invoiceCount === 1;
+    assert(result.headers.get("content-type")?.includes(pdf ? "application/pdf" : "application/zip"));
+    assert(result.headers.get("content-disposition")?.includes("attachment"));
+    const bytes = Buffer.from(await result.arrayBuffer());
+    assert.equal(bytes.subarray(0, pdf ? 4 : 2).toString(), pdf ? "%PDF" : "PK");
+    await sales.call("POST", "/invoices/bills/" + root.id + "/download", {}, 403);
+  });
   await t.test(
     "termination, handover and deposit settlement are distinct",
     async () => {

@@ -113,6 +113,23 @@ export class InvoiceBatchService {
         "utf8",
       ),
     });
-    return { zip: createZip(files), count, issues };
+    return {
+      zip: createZip(files),
+      count,
+      issues,
+      pdfs: files.slice(0, count),
+    };
+  }
+  async downloadBill(actor: Actor, billId: string) {
+    const result = await this.download(actor, { billIds: [billId] });
+    if (!result.count) fail("暂无可下载发票，请登记收款或稍后重试");
+    // A single-bill download must not silently omit one of its invoices.
+    if (result.issues) fail("部分发票暂时无法下载，请稍后重试");
+    const single = result.count === 1;
+    return {
+      data: single ? result.pdfs[0].data : result.zip,
+      contentType: single ? "application/pdf" : "application/zip",
+      filename: single ? result.pdfs[0].name : `bill-${billId}-invoices.zip`,
+    };
   }
 }

@@ -40,6 +40,20 @@ export class InvoicesController {
     res.setHeader("X-Invoice-Issues", String(result.issues));
     res.send(result.zip);
   }
+  @Post("bills/:billId/download") async downloadBill(
+    @Req() r: any,
+    @Param("billId") billId: string,
+    @Res() res: any,
+  ) {
+    const result = await this.batch.downloadBill(r.actor, billId);
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.send(result.data);
+  }
   @Post(":id/render") render(@Req() r: any, @Param("id") key: string) {
     return this.renderer.render(r.actor, key);
   }
