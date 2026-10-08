@@ -49,6 +49,18 @@ export class UnitsService extends ResourceService {
     if (row && data.projectId && data.projectId !== row.projectId)
       fail("已有单位不能转移项目");
   }
+  protected async beforeRemove(_a: Actor, tx: any, row: any) {
+    const occupied = await tx.order.findFirst({
+      where: {
+        unitId: row.id,
+        deletedAt: null,
+        status: { not: "CLOSED" },
+        occupancyState: { not: "RELEASED" },
+      },
+      select: { id: true },
+    });
+    if (occupied) fail("已租单位不能删除");
+  }
   async batch(a: Actor, body: unknown, preview = false) {
     this.access.allow(a, "units", true);
     const input = UnitBatchSchema.parse(body);

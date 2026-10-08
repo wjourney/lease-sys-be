@@ -62,3 +62,13 @@ test("strict batch schema rejects forged inherited fields, empty and oversized b
   const { service } = fixture(); const input = body();
   for (const rows of [[], Array.from({ length: 101 }, () => input.rows[0]), [{ ...input.rows[0], floor: "999" }]]) await assert.rejects(service.batch(actor, { ...input, rows }));
 });
+test("an occupied unit cannot be deleted even when the API is called directly", async () => {
+  const { service } = fixture();
+  const beforeRemove = (service as any).beforeRemove.bind(service);
+  const unit = { id: randomUUID() };
+  await assert.rejects(
+    beforeRemove(actor, { order: { findFirst: async () => ({ id: randomUUID() }) } }, unit),
+    /已租单位不能删除/,
+  );
+  await beforeRemove(actor, { order: { findFirst: async () => null } }, unit);
+});
