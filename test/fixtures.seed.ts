@@ -143,7 +143,7 @@ async function main() {
         salesCanViewExactRent: i === 1,
         typeConfigs: ["apartment", "studio", "office"].map(code => ({
           code, name: code, building: "A座", floor: "12", area: "38",
-          layout: "1室1厅", age: 3, minRent: "900", maxRent: "35000",
+          layout: "1室1厅", age: 3, minRent: "900", maxRent: "35000", referenceRent: "5000",
         })),
       },
       a,

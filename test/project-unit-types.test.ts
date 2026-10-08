@@ -10,7 +10,7 @@ const type = {
   name: "大单位",
   building: "A座", floor: "12", area: "48", layout: "两房", age: 5,
   minRent: "10000",
-  maxRent: "20000",
+  maxRent: "20000", referenceRent: "15000",
 };
 const project: any = { id: "project", typeConfigs: [type] };
 const tx: any = {
@@ -41,6 +41,8 @@ test("project type validation rejects missing fields, invalid bounds and duplica
     [{ ...type, maxRent: "1" }],
     [{ ...type, floor: "" }],
     [{ ...type, minRent: undefined }],
+    [{ ...type, referenceRent: undefined }],
+    [{ ...type, referenceRent: "999" }],
     [type, { ...type, code: "OTHER" }],
   ])
     await assert.rejects(projects.validate({}, { typeConfigs: configs }, tx));
@@ -62,13 +64,15 @@ test("unit validation accepts only its own project types", async () => {
     unitTypeCode: "LARGE",
     roomNo: "1201", area: "999",
     minRent: "10000",
-    maxRent: "20000",
+    maxRent: "20000", referenceRent: "15000",
     referenceRent: "15000",
   };
   await units.validate({}, data, tx);
   assert.equal(data.area, "48");
   assert.equal((data as any).floor, "12");
-  await assert.rejects(units.validate({}, { ...data, referenceRent: "999" }, tx));
+  const forged = { ...data, referenceRent: "999" };
+  await units.validate({}, forged, tx);
+  assert.equal(forged.referenceRent, "15000");
   await assert.rejects(
     units.validate({}, { ...data, unitTypeCode: "ANOTHER_PROJECT_TYPE" }, tx),
   );

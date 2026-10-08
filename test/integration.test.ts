@@ -720,7 +720,7 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "测试项目-" + randomUUID().slice(0, 5),
-          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000" }],
+          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000", referenceRent: "15000" }],
           region: "九龙",
           address: "测试地址",
           propertyName: "测试物业",
@@ -795,7 +795,7 @@ test("full workflow and authorization invariants", async (t) => {
         "/projects",
         {
           name: "Logo 编辑测试-" + randomUUID().slice(0, 5),
-          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000" }],
+          typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000", referenceRent: "15000" }],
           region: "港岛",
           address: "测试地址",
           longitude: 114.1694,
@@ -975,7 +975,7 @@ test("full workflow and authorization invariants", async (t) => {
       );
     },
   );
-  await t.test("unit creation validates the reference rent range", async () => {
+  await t.test("unit creation inherits the reference rent from its type", async () => {
     const existing = await admin.call("GET", `/units/${order.unitId}`);
     const body = {
       projectId: existing.projectId,
@@ -993,14 +993,8 @@ test("full workflow and authorization invariants", async (t) => {
         rentCycle: "月付",
       },
     };
-    const rejected = await admin.call("POST", "/units", body, 400);
-    assert.equal(rejected.message, "月租价格须介于单位类型的最低价和最高价之间");
-    const created = await admin.call(
-      "POST",
-      "/units",
-      { ...body, referenceRent: "22222" },
-      201,
-    );
+    const created = await admin.call("POST", "/units", body, 201);
+    assert.equal(Number(created.referenceRent), 5000);
     assert.equal(created.extra.phase, "A座");
     assert.equal(Number(created.minRent), 900);
     assert.equal(Number(created.maxRent), 35000);
@@ -1748,12 +1742,12 @@ test("batch unit creation is atomic, concurrent-safe, idempotent and permission 
   const suffix = randomUUID().slice(0, 8);
   const project = await admin.call("POST", "/projects", {
     name: `批量单位-${suffix}`, region: "港岛", address: "批量测试地址",
-    typeConfigs: [{ code: "BATCH", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 2, minRent: "100", maxRent: "200" }],
+    typeConfigs: [{ code: "BATCH", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 2, minRent: "100", maxRent: "200", referenceRent: "150" }],
   }, 201);
   const body = { requestId: randomUUID(), projectId: project.id, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "BATCH", referenceRent: "150" })) };
   for (const client of [sales, company, finance]) await client.call("POST", "/units/batch", body, 403);
   await admin.call("POST", "/units/batch", { ...body, rows: [] }, 400);
-  const invalid = await admin.call("POST", "/units/batch", { ...body, rows: [body.rows[0], { ...body.rows[1], referenceRent: "999" }] }, 201);
+  const invalid = await admin.call("POST", "/units/batch", { ...body, rows: [body.rows[0], { ...body.rows[1], roomNo: "01" }] }, 201);
   assert.equal(invalid.ok, false);
   assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 0);
   assert.equal((await operations.call("POST", "/units/batch-preview", body, 201)).ok, true);
@@ -1766,9 +1760,19 @@ test("batch unit creation is atomic, concurrent-safe, idempotent and permission 
   assert.equal((await admin.call("POST", "/units/batch", collision, 201)).ok, false);
   assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 2);
   const unit = await admin.call("GET", `/units/${one.unitIds[0]}`);
-  assert.equal(unit.floor, "3"); assert.equal(unit.occupancyStatus, "AVAILABLE");
+  assert.equal(unit.floor, "3"); assert.equal(Number(unit.referenceRent), 150); assert.equal(unit.occupancyStatus, "AVAILABLE");
   const competing = { ...body, requestId: randomUUID(), rows: [{ ...body.rows[0], roomNo: "04" }] };
   const outcomes = await Promise.all([admin.call("POST", "/units/batch", competing, 201), admin.call("POST", "/units/batch", { ...competing, requestId: randomUUID() }, 201)]);
   assert.equal(outcomes.filter(x => x.ok).length, 1);
   assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 3);
+  const beforeDelete = await admin.call("GET", `/projects/${project.id}`);
+  assert.equal(beforeDelete.unitTypeUsage.BATCH, 3);
+  await admin.call("DELETE", `/units/${one.unitIds[0]}`, { reason: "测试历史单位引用" });
+  const afterDelete = await admin.call("GET", `/projects/${project.id}`);
+  assert.equal(afterDelete.unitCount, 2);
+  assert.equal(afterDelete.unitTypeUsage.BATCH, 3);
+  const changedType = { ...afterDelete.typeConfigs[0], referenceRent: "160" };
+  await admin.call("PATCH", `/projects/${project.id}`, { typeConfigs: [changedType], revision: afterDelete.revision });
+  const synced = await admin.call("GET", `/units/${one.unitIds[1]}`);
+  assert.equal(Number(synced.referenceRent), 160);
 });

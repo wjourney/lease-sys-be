@@ -6,6 +6,6 @@ export const UnitBatchSchema = z.object({
   rows: z.array(z.object({
     unitTypeCode: z.string().trim().min(1).max(500),
     roomNo: z.string().trim().min(1).max(100),
-    referenceRent: money,
+    referenceRent: money.optional(),
   }).strict()).min(1).max(100),
 }).strict();

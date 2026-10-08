@@ -6,7 +6,7 @@ import { UnitsService } from "../src/modules/units/units.service";
 import { AccessService } from "../src/common/auth/access.service";
 const actor: any = { id: randomUUID(), name: "管理员", role: "SUPER_ADMIN" };
 const projectId = randomUUID();
-const type = { code: "L", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 3, minRent: "100", maxRent: "200" };
+const type = { code: "L", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 3, minRent: "100", maxRent: "200", referenceRent: "150" };
 function fixture() {
   const state: any = { units: [], batches: [] };
   let failInsert = false;
@@ -29,18 +29,18 @@ function fixture() {
   } };
   return { state, service: new UnitsService(db, new AccessService(db), {} as any), fail: () => { failInsert = true; } };
 }
-function body() { return { requestId: randomUUID(), projectId, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "L", referenceRent: "150" })) }; }
+function body() { return { requestId: randomUUID(), projectId, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "L" })) }; }
 test("batch preview writes nothing; creation inherits metadata and audits each unit; retry returns the same units", async () => {
   const { service, state } = fixture(); const input = body();
   assert.equal((await service.batch(actor, input, true)).ok, true); assert.equal(state.units.length, 0);
   const result = await service.batch(actor, input); assert.equal(result.count, 2);
-  for (const u of state.units) { assert.equal(u.floor, "3"); assert.equal(u.area, "40"); assert.equal(u.operationLogs[0].action, "CREATE"); }
+  for (const u of state.units) { assert.equal(u.floor, "3"); assert.equal(u.area, "40"); assert.equal(u.referenceRent, "150"); assert.equal(u.operationLogs[0].action, "CREATE"); }
   const retry = await service.batch(actor, input); assert.equal(retry.replayed, true); assert.deepEqual(retry.unitIds, result.unitIds); assert.equal(state.units.length, 2);
   await assert.rejects(service.batch(actor, { ...input, rows: [input.rows[0]] }), /重复提交编号冲突/);
   await assert.rejects(service.batch({ ...actor, id: randomUUID() }, input), /重复提交编号冲突/);
 });
 test("batch reports row errors and saves no valid subset", async () => {
-  for (const patch of [{ roomNo: "01" }, { referenceRent: "999" }, { unitTypeCode: "UNKNOWN" }]) {
+  for (const patch of [{ roomNo: "01" }, { unitTypeCode: "UNKNOWN" }]) {
     const { service, state } = fixture(); const input = body(); Object.assign(input.rows[1], patch);
     const result = await service.batch(actor, input); assert.equal(result.ok, false); assert.equal(result.issues?.[0].row, 1); assert.equal(state.units.length, 0); assert.equal(state.batches.length, 0);
   }

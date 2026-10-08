@@ -5,7 +5,6 @@ import { AccessService } from "../../common/auth/access.service";
 import { Actor, internal } from "../../common/auth/actor";
 import { ResourceService } from "../../common/resources/resource.service";
 import { fail } from "../../common/utils/errors";
-import { number } from "../../common/utils/value";
 import { PrismaService } from "../../database/prisma.service";
 import { UnitsSchema } from "./dto/units.schema";
 import { normalizeUploadName } from "../materials/file-name";
@@ -45,8 +44,6 @@ export class UnitsService extends ResourceService {
     if (!d.roomNo?.trim()) fail("请填写房号");
     data.roomNo = d.roomNo.trim();
     data.unitNo = `${type.building} ${/楼$/.test(type.floor) ? type.floor : `${type.floor}楼`} ${data.roomNo}`;
-    if (number(d.referenceRent).lt(type.minRent) || number(d.referenceRent).gt(type.maxRent))
-      fail("月租价格须介于单位类型的最低价和最高价之间");
     const duplicate = await tx.unit.findFirst({ where: { projectId: d.projectId, OR: [{ building: type.building, floor: type.floor, roomNo: data.roomNo }, { unitNo: data.unitNo }], ...(row ? { id: { not: row.id } } : {}) } });
     if (duplicate) fail(duplicate.deletedAt ? "此房号已被历史单位使用，请使用其他房号" : "该期/座、楼层下已存在此房号");
     if (row && data.projectId && data.projectId !== row.projectId)

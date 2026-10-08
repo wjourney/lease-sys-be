@@ -10,7 +10,7 @@ export const UnitsSchema = z.object({
   area: money.optional(),
   layout: opt,
   decoration: opt,
-  referenceRent: money,
+  referenceRent: money.optional(),
   minRent: money.optional(),
   maxRent: money.optional(),
   minLeaseMonths: z.number().int().min(1).max(120).optional(),

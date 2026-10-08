@@ -41,6 +41,7 @@ export const ProjectsSchema = z.object({
         age: z.number().int().min(0).max(999),
         minRent: money,
         maxRent: money,
+        referenceRent: money,
       }),
     )
     .optional(),

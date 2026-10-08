@@ -28,7 +28,7 @@ test('full-term generation is idempotent and migration preserves void/deleted bi
   rows.splice(5,1);await service.fullTerm(tx,o,actor,true);assert.equal(rows.length,12);assert.equal(rows[0],original);assert.equal(rows[0].status,'VOID');
 });
 test('legacy types split by actual unit attributes, preserve values and remain stable on reruns', () => {
-  const units=[{id:'one',unitTypeCode:'OLD',building:'A座',floor:'2',area:'30',layout:'一房',extra:{age:'5'},minRent:'100',maxRent:'200'},{id:'two',unitTypeCode:'OLD',building:'B座',floor:'3',area:'40',layout:'两房',extra:{},minRent:'200',maxRent:'300'}];
+  const units=[{id:'one',unitTypeCode:'OLD',building:'A座',floor:'2',area:'30',layout:'一房',extra:{age:'5'},minRent:'100',maxRent:'200',referenceRent:'150'},{id:'two',unitTypeCode:'OLD',building:'B座',floor:'3',area:'40',layout:'两房',extra:{},minRent:'200',maxRent:'300',referenceRent:'250'}];
   const plan=planUnitTypes({typeConfigs:[{code:'OLD',name:'大单位'}]},units);assert.equal(plan.types.length,2);assert.equal(plan.incomplete.length,1);assert.equal(plan.types[1].age,undefined);
   const nextUnits=units.map(u=>({...u,unitTypeCode:plan.assignments.find(a=>a.id===u.id)!.code}));
   const second=planUnitTypes({typeConfigs:plan.types},nextUnits);assert.deepEqual(second.types,plan.types);assert.equal(second.assignments.length,0);assert.equal(second.incomplete.length,1);

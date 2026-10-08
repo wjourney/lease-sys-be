@@ -101,15 +101,17 @@ export class ProjectsService extends ResourceService {
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);
     x.typeConfigs = await projectUnitTypes(this.db, row);
-    const units = await this.db.unit.findMany({
-      where: {
-        projectId: row.id,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-      },
+    const allUnits = await this.db.unit.findMany({
+      where: { projectId: row.id },
+      select: { id: true, unitTypeCode: true, deletedAt: true },
     });
+    const units = allUnits.filter((unit) => !unit.deletedAt);
+    if (["SUPER_ADMIN", "OPERATIONS"].includes(a.role)) {
+      const usage: Record<string, number> = Object.create(null);
+      for (const unit of allUnits)
+        usage[unit.unitTypeCode] = (usage[unit.unitTypeCode] ?? 0) + 1;
+      x.unitTypeUsage = usage;
+    }
     const occupied = await this.db.order.findMany({
       where: {
         unitId: {
