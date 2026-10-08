@@ -58,6 +58,9 @@ model SalesCompany {
   address               String? @db.Text
   serviceArea           String? @db.Text
   registrationNo        String?
+  payoutBankName        String?
+  payoutAccountName     String?
+  payoutAccountNo       String?
   registrationExpiresOn DateTime? @db.Date
   serviceStartsOn       DateTime? @db.Date
   serviceEndsOn         DateTime? @db.Date

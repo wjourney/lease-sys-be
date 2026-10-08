@@ -114,6 +114,35 @@ test("full workflow and authorization invariants", async (t) => {
     for (const r of ["users", "settings", "fund-accounts", "sales-companies", "projects", "orders"]) assert.ok(me.capabilities.write.includes(r));
     assert.equal(me.capabilities.finance, false);
   });
+  await t.test("company payout details and ordered images stay scoped to its administrator", async () => {
+    const before = await company.call("GET", `/sales-companies/${sa.salesCompanyId}`);
+    const edited = await company.call("PATCH", `/sales-companies/${sa.salesCompanyId}`, {
+      revision: before.revision,
+      payoutBankName: "测试银行",
+      payoutAccountName: "测试销售公司",
+      payoutAccountNo: "1234567890",
+    });
+    assert.equal(edited.payoutAccountNo, "1234567890");
+    assert.equal((await company.call("GET", `/sales-companies/${sa.salesCompanyId}`)).payoutBankName, "测试银行");
+    await sales.call("PATCH", `/sales-companies/${sa.salesCompanyId}/images/order`, { ids: [] }, 403);
+
+    const uploaded: string[] = [];
+    for (let index = 0; index < 2; index++) {
+      const body = new FormData();
+      body.append("payload", JSON.stringify({ salesCompanyId: sa.salesCompanyId, category: "PHOTO", title: `company-${index}.png`, visibility: "SHARED", sortOrder: index }));
+      body.append("file", new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10])], { type: "image/png" }), `company-${index}.png`);
+      const response = await fetch(base + "/materials/upload", { method: "POST", headers: { Cookie: company.cookies, "X-CSRF-Token": company.csrf }, body });
+      const data = await response.json();
+      assert.equal(response.status, 201, JSON.stringify(data));
+      uploaded.push(data.id);
+    }
+    const all = await company.call("GET", `/materials?salesCompanyId=${sa.salesCompanyId}&pageSize=100`);
+    const ids = [uploaded[1], uploaded[0], ...all.items.filter((row: any) => ["PHOTO", "LOGO"].includes(row.category) && row.storageKey && !uploaded.includes(row.id)).map((row: any) => row.id)];
+    await company.call("PATCH", `/sales-companies/${sa.salesCompanyId}/images/order`, { ids });
+    const reordered = await company.call("GET", `/materials?salesCompanyId=${sa.salesCompanyId}&pageSize=100`);
+    assert.equal(reordered.items.find((row: any) => row.id === uploaded[1]).sortOrder, 0);
+    assert.equal(reordered.items.find((row: any) => row.id === uploaded[0]).sortOrder, 1);
+  });
   await t.test("five roles and company scopes", async () => {
     assert.equal((await admin.call("GET", "/users")).total, 6);
     const mine = await sales.call("GET", "/orders");

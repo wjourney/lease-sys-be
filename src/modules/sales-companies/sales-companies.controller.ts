@@ -43,6 +43,13 @@ export class SalesCompaniesController {
       await this.service.create(r.actor, body),
     );
   }
+  @Patch(":id/images/order") orderImages(
+    @Req() r: any,
+    @Param("id") id: string,
+    @Body() body: any,
+  ) {
+    return this.service.orderImages(r.actor, id, body);
+  }
   @Patch(":id") async edit(
     @Req() r: any,
     @Param("id") id: string,
