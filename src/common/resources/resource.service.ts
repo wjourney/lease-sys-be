@@ -62,44 +62,30 @@ export abstract class ResourceService extends ResourceQueryService {
       return update(tx, this.resource, row, d, a, reason);
     });
   }
-  async remove(a: Actor, key: string, reason: string): Promise<any> {
-    const [row] = await this.removeMany(a, [key], reason);
-    return row;
-  }
-
-  async removeMany(a: Actor, keys: string[], reason: string) {
+  async remove(a: Actor, key: string, reason: string) {
     this.access.allow(a, this.resource, true);
-    const ids = z.array(z.string().uuid()).min(1).max(100).parse(keys);
-    if (new Set(ids).size !== ids.length) fail("删除列表包含重复记录");
     if (!reason?.trim()) fail("请填写删除原因");
     return this.db.$transaction(async (tx) => {
-      const rows: any[] = [];
-      for (const key of [...ids].sort()) {
-        await lock(tx, this.resource, key);
-        const row = await this.access.get(a, this.resource, key, tx);
-        await this.beforeRemove(a, tx, row);
-        for (const [model, field] of this.references)
-          if (await (tx as any)[model].count({ where: { [field]: key } }))
-            fail("已有业务引用，不能删除");
-        rows.push(row);
-      }
-      const deleted: any[] = [];
-      for (const row of rows)
-        deleted.push(await update(
-          tx,
-          this.resource,
-          row,
-          {
-            deletedAt: new Date(),
-            deletedBy: a.id,
-            ...(this.resource === "users"
-              ? { authVersion: row.authVersion + 1 }
-              : {}),
-          },
-          a,
-          reason,
-        ));
-      return deleted;
-    }, { maxWait: 10000, timeout: 60000 });
+      await lock(tx, this.resource, key);
+      const row = await this.access.get(a, this.resource, key, tx);
+      await this.beforeRemove(a, tx, row);
+      for (const [model, field] of this.references)
+        if (await (tx as any)[model].count({ where: { [field]: key } }))
+          fail("已有业务引用，请改为停用");
+      return update(
+        tx,
+        this.resource,
+        row,
+        {
+          deletedAt: new Date(),
+          deletedBy: a.id,
+          ...(this.resource === "users"
+            ? { authVersion: row.authVersion + 1 }
+            : {}),
+        },
+        a,
+        reason,
+      );
+    });
   }
 }
