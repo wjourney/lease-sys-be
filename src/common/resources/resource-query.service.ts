@@ -47,7 +47,7 @@ export abstract class ResourceQueryService {
     const and: any[] = [{ deletedAt: null }, await this.access.scope(a, r), ...await this.listConditions(a, q)];
     const search: any = {
       users: ["name", "username", "phone"],
-      "sales-companies": ["name", "companyNo"],
+      "sales-companies": ["name", "nameEn", "registrationNo", "contactName", "phone"],
       projects: ["name", "address"],
       units: ["unitNo", "building"],
       orders: ["orderNo", "tenantName"],
