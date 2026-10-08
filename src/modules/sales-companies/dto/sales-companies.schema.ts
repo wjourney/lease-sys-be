@@ -21,6 +21,5 @@ export const SalesCompaniesSchema = z.object({
   positions: z
     .array(z.object({ code: text, name: text, enabled: z.boolean() }))
     .optional(),
-  status: z.enum(["ACTIVE", "DISABLED"]).optional(),
 });
 export type SalesCompaniesInput = z.input<typeof SalesCompaniesSchema>;

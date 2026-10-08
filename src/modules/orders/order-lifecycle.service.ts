@@ -297,11 +297,10 @@ export class OrderLifecycleService {
             tx,
           );
           if (
-            company.status !== "ACTIVE" ||
-            (company.serviceEndsOn &&
-              company.serviceEndsOn.getTime() + 86400000 < Date.now())
+            company.serviceEndsOn &&
+            company.serviceEndsOn.getTime() + 86400000 < Date.now()
           )
-            fail("销售公司服务已到期或停用");
+            fail("销售公司服务已到期");
         }
         const months =
           { ONE_ONE: 1, TWO_ONE: 2, THREE_ONE: 3 }[d.depositPlan as string] ??

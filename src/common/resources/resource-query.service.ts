@@ -69,7 +69,6 @@ export abstract class ResourceQueryService {
       q.status &&
       [
         "users",
-        "sales-companies",
         "projects",
         "orders",
         "incomes",
