@@ -752,8 +752,17 @@ test("full workflow and authorization invariants", async (t) => {
       const detail = await admin.call("GET", "/projects/" + p.id);
       assert.equal(detail.name, revised.name);
       assert.equal(detail.operations, undefined);
-      await admin.call("DELETE", "/projects/" + p.id, { reason: "测试完成" });
+      const second = await admin.call("POST", "/projects", {
+        name: "批量删除测试-" + randomUUID().slice(0, 5),
+        typeConfigs: [{ code: "LARGE", name: "大单位", building: "A座", floor: "12", area: "38", layout: "1室1厅", age: 3, minRent: "1000", maxRent: "20000", referenceRent: "15000" }],
+        region: "九龙",
+        address: "测试地址",
+      }, 201);
+      await admin.call("DELETE", "/projects", { ids: [p.id, randomUUID()], reason: "应整批撤销" }, 404);
+      await admin.call("GET", "/projects/" + p.id);
+      await admin.call("DELETE", "/projects", { ids: [p.id, second.id], reason: "测试完成" });
       await admin.call("GET", "/projects/" + p.id, undefined, 404);
+      await admin.call("GET", "/projects/" + second.id, undefined, 404);
     },
   );
   await t.test(

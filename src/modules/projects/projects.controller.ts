@@ -59,12 +59,11 @@ export class ProjectsController {
       await this.service.edit(r.actor, id, body),
     );
   }
-  @Delete(":id") async remove(
+  @Delete() async remove(
     @Req() r: any,
-    @Param("id") id: string,
     @Body() body: any,
   ) {
-    await this.service.remove(r.actor, id, body.reason);
-    return { ok: true };
+    const deleted = await this.service.removeMany(r.actor, body?.ids, body?.reason);
+    return { ok: true, count: deleted.length };
   }
 }
