@@ -435,3 +435,13 @@ model StorageCleanup {
   @@index([deleteAfter])
   @@map("storage_cleanup")
 }
+
+// Committed atomically with units; retained to make timeout retries safe.
+model UnitCreationBatch {
+  id          String   @id @db.Char(36)
+  projectId   String   @db.Char(36)
+  actorId     String   @db.Char(36)
+  fingerprint String   @db.Char(64)
+  unitIds     Json
+  createdAt   DateTime @default(now())
+}

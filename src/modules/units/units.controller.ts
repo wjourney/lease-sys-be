@@ -38,6 +38,12 @@ export class UnitsController {
       await this.service.create(r.actor, body),
     );
   }
+  @Post("batch-preview") previewBatch(@Req() r: any, @Body() body: any) {
+    return this.service.batch(r.actor, body, true);
+  }
+  @Post("batch") createBatch(@Req() r: any, @Body() body: any) {
+    return this.service.batch(r.actor, body);
+  }
   @Patch(":id") async edit(
     @Req() r: any,
     @Param("id") id: string,

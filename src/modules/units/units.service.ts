@@ -1,4 +1,6 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { UnitBatchSchema } from "./dto/unit-batch.schema";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, internal } from "../../common/auth/actor";
 import { ResourceService } from "../../common/resources/resource.service";
@@ -10,7 +12,7 @@ import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
 import { projectUnitTypes } from "../projects/project-unit-types";
 import { unitTypeValues } from "../projects/unit-type-values";
-import { lock } from "../../common/database/record-mutations";
+import { insert, lock } from "../../common/database/record-mutations";
 @Injectable()
 export class UnitsService extends ResourceService {
   readonly resource = "units";
@@ -26,14 +28,17 @@ export class UnitsService extends ResourceService {
   ) {
     super(db, access);
   }
-  protected async validate(a: Actor, data: any, tx: any, row?: any) {
+  protected async validate(a: Actor, data: any, tx: any, row?: any, batchTypes?: any[]) {
     const d = {
       ...row,
       ...data,
     };
-    await lock(tx, "projects", d.projectId);
-    const project = await this.access.get(a, "projects", d.projectId, tx);
-    const types = await projectUnitTypes(tx, project);
+    let types = batchTypes;
+    if (!types) {
+      await lock(tx, "projects", d.projectId);
+      const project = await this.access.get(a, "projects", d.projectId, tx);
+      types = await projectUnitTypes(tx, project);
+    }
     const type = types.find((x) => x.code === d.unitTypeCode);
     if (!type) fail("请选择所属项目的单位类型");
     Object.assign(data, unitTypeValues(type, { ...row?.extra, ...data.extra }));
@@ -42,10 +47,55 @@ export class UnitsService extends ResourceService {
     data.unitNo = `${type.building} ${/楼$/.test(type.floor) ? type.floor : `${type.floor}楼`} ${data.roomNo}`;
     if (number(d.referenceRent).lt(type.minRent) || number(d.referenceRent).gt(type.maxRent))
       fail("月租价格须介于单位类型的最低价和最高价之间");
-    const duplicate = await tx.unit.findFirst({ where: { projectId: d.projectId, building: type.building, floor: type.floor, roomNo: data.roomNo, deletedAt: null, ...(row ? { id: { not: row.id } } : {}) } });
-    if (duplicate) fail("该期/座、楼层下已存在此房号");
+    const duplicate = await tx.unit.findFirst({ where: { projectId: d.projectId, OR: [{ building: type.building, floor: type.floor, roomNo: data.roomNo }, { unitNo: data.unitNo }], ...(row ? { id: { not: row.id } } : {}) } });
+    if (duplicate) fail(duplicate.deletedAt ? "此房号已被历史单位使用，请使用其他房号" : "该期/座、楼层下已存在此房号");
     if (row && data.projectId && data.projectId !== row.projectId)
       fail("已有单位不能转移项目");
+  }
+  async batch(a: Actor, body: unknown, preview = false) {
+    this.access.allow(a, "units", true);
+    const input = UnitBatchSchema.parse(body);
+    const { requestId, projectId, rows } = input;
+    const fingerprint = createHash("sha256").update(JSON.stringify({ projectId, rows })).digest("hex");
+    return this.db.$transaction(async (tx) => {
+      await lock(tx, "projects", projectId);
+      const project = await this.access.get(a, "projects", projectId, tx);
+      const previous = await tx.unitCreationBatch.findUnique({ where: { id: requestId } });
+      if (previous) {
+        if (previous.actorId !== a.id || previous.fingerprint !== fingerprint)
+          throw new ConflictException("重复提交编号冲突");
+        return { ok: true, replayed: true, unitIds: previous.unitIds, count: (previous.unitIds as string[]).length };
+      }
+      const types = await projectUnitTypes(tx, project);
+      const prepared: any[] = [];
+      const issues: { row: number; message: string }[] = [];
+      const seen = new Map<string, number>();
+      for (const [index, item] of rows.entries()) {
+        const data: any = { projectId, ...item };
+        try {
+          await this.validate(a, data, tx, undefined, types);
+          const identity = data.unitNo.normalize("NFKC").toLocaleLowerCase();
+          const earlier = seen.get(identity);
+          if (earlier !== undefined) {
+            issues.push({ row: index, message: `与第 ${earlier + 1} 行房号重复` });
+          } else seen.set(identity, index);
+          prepared.push(data);
+        } catch (error) {
+          // Only expected business validation errors become row feedback.
+          if (!(error instanceof Error) || !("getStatus" in error) || (error as any).getStatus() !== 400) throw error;
+          issues.push({ row: index, message: error.message });
+        }
+      }
+      if (issues.length) return { ok: false, issues };
+      if (preview) return { ok: true, count: rows.length };
+      const unitIds: string[] = [];
+      for (const data of prepared) {
+        const unit = await insert(tx, "units", data, a);
+        unitIds.push(unit.id);
+      }
+      await tx.unitCreationBatch.create({ data: { id: requestId, projectId, actorId: a.id, fingerprint, unitIds } });
+      return { ok: true, count: unitIds.length, unitIds };
+    }, { maxWait: 10000, timeout: 60000 });
   }
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);

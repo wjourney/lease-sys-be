@@ -1742,3 +1742,33 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
     },
   );
 });
+
+// Uses only the disposable CI database configured above.
+test("batch unit creation is atomic, concurrent-safe, idempotent and permission checked", async () => {
+  const suffix = randomUUID().slice(0, 8);
+  const project = await admin.call("POST", "/projects", {
+    name: `批量单位-${suffix}`, region: "港岛", address: "批量测试地址",
+    typeConfigs: [{ code: "BATCH", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 2, minRent: "100", maxRent: "200" }],
+  }, 201);
+  const body = { requestId: randomUUID(), projectId: project.id, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "BATCH", referenceRent: "150" })) };
+  for (const client of [sales, company, finance]) await client.call("POST", "/units/batch", body, 403);
+  await admin.call("POST", "/units/batch", { ...body, rows: [] }, 400);
+  const invalid = await admin.call("POST", "/units/batch", { ...body, rows: [body.rows[0], { ...body.rows[1], referenceRent: "999" }] }, 201);
+  assert.equal(invalid.ok, false);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 0);
+  assert.equal((await operations.call("POST", "/units/batch-preview", body, 201)).ok, true);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 0);
+  const [one, two] = await Promise.all([operations.call("POST", "/units/batch", body, 201), operations.call("POST", "/units/batch", body, 201)]);
+  assert.deepEqual(one.unitIds, two.unitIds);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 2);
+  const retry = await operations.call("POST", "/units/batch", body, 201); assert.equal(retry.replayed, true);
+  const collision = { ...body, requestId: randomUUID(), rows: [{ ...body.rows[0], roomNo: "03" }, body.rows[1]] };
+  assert.equal((await admin.call("POST", "/units/batch", collision, 201)).ok, false);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 2);
+  const unit = await admin.call("GET", `/units/${one.unitIds[0]}`);
+  assert.equal(unit.floor, "3"); assert.equal(unit.occupancyStatus, "AVAILABLE");
+  const competing = { ...body, requestId: randomUUID(), rows: [{ ...body.rows[0], roomNo: "04" }] };
+  const outcomes = await Promise.all([admin.call("POST", "/units/batch", competing, 201), admin.call("POST", "/units/batch", { ...competing, requestId: randomUUID() }, 201)]);
+  assert.equal(outcomes.filter(x => x.ok).length, 1);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 3);
+});
