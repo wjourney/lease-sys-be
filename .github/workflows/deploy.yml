@@ -50,7 +50,18 @@ jobs:
           tags: ghcr.io/wjourney/lease-sys-be:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Deploy this revision
+      - name: Prepare release archive
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/lease-release"
+          mkdir -p "$release_dir"
+          git bundle create "$release_dir/source.bundle" master
+          docker pull "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
+          docker save -o "$release_dir/image.tar" "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
+          tar -C "$release_dir" -cf - source.bundle image.tar | gzip -6 > "$release_dir/release.tar.gz"
+          du -h "$release_dir/release.tar.gz"
+      - name: Upload release archive
+        timeout-minutes: 20
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
@@ -60,18 +71,19 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          release_dir="$RUNNER_TEMP/lease-release"
-          mkdir -p "$release_dir"
-          git bundle create "$release_dir/source.bundle" master
-          docker pull "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
-          docker save -o "$release_dir/image.tar" "ghcr.io/wjourney/lease-sys-be:$GITHUB_SHA"
-          tar -C "$release_dir" -cf - source.bundle image.tar | gzip -6 > "$release_dir/release.tar.gz"
           release_file="lease-release-$GITHUB_SHA.tar.gz"
-          scp -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          scp -o BatchMode=yes -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            "$release_dir/release.tar.gz" \
+            "$RUNNER_TEMP/lease-release/release.tar.gz" \
             "lease-deploy@47.117.136.208:$release_file"
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+      - name: Activate release
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          release_file="lease-release-$GITHUB_SHA.tar.gz"
+          ssh -o BatchMode=yes -o ConnectTimeout=15 \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             lease-deploy@47.117.136.208 \
             "sudo /usr/local/sbin/lease-sys-deploy api $GITHUB_SHA < '$release_file'; status=\$?; rm -f '$release_file'; exit \$status"
