@@ -62,6 +62,42 @@ export class ProjectsService extends ResourceService {
       }
     }
   }
+  async orderImages(a: Actor, projectId: string, body: any) {
+    this.access.allow(a, "projects", true);
+    const ids = z.array(z.string().uuid()).max(100).parse(body.ids);
+    if (new Set(ids).size !== ids.length) fail("项目图片列表包含重复文件");
+    return this.db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId} FOR UPDATE`;
+      await this.access.get(a, "projects", projectId, tx);
+      const images = await tx.material.findMany({
+        where: {
+          projectId,
+          category: { in: ["PHOTO", "LOGO"] },
+          storageKey: { not: null },
+          deletedAt: null,
+          isCurrent: true,
+        },
+      });
+      if (
+        images.length !== ids.length ||
+        ids.some((id) => !images.some((image) => image.id === id))
+      )
+        fail("项目图片列表已变化，请刷新后重试");
+      for (const [index, id] of ids.entries()) {
+        const image = images.find((item) => item.id === id)!;
+        if (image.sortOrder !== index)
+          await update(
+            tx,
+            "materials",
+            image,
+            { sortOrder: index },
+            a,
+            "调整项目图片顺序与 Logo",
+          );
+      }
+      return { ok: true };
+    });
+  }
   async orderLogos(a: Actor, projectId: string, body: any) {
     this.access.allow(a, "projects", true);
     const ids = z.array(z.string().uuid()).max(4).parse(body.ids);
@@ -70,30 +106,14 @@ export class ProjectsService extends ResourceService {
       await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId} FOR UPDATE`;
       await this.access.get(a, "projects", projectId, tx);
       const logos = await tx.material.findMany({
-        where: {
-          projectId,
-          category: "LOGO",
-          storageKey: { not: null },
-          deletedAt: null,
-          isCurrent: true,
-        },
+        where: { projectId, category: "LOGO", storageKey: { not: null }, deletedAt: null, isCurrent: true },
       });
-      if (
-        logos.length !== ids.length ||
-        ids.some((id) => !logos.some((logo) => logo.id === id))
-      )
+      if (logos.length !== ids.length || ids.some((id) => !logos.some((logo) => logo.id === id)))
         fail("Logo 列表已变化，请刷新后重试");
       for (const [index, id] of ids.entries()) {
         const logo = logos.find((item) => item.id === id)!;
         if (logo.sortOrder !== index)
-          await update(
-            tx,
-            "materials",
-            logo,
-            { sortOrder: index },
-            a,
-            "调整项目 Logo 顺序",
-          );
+          await update(tx, "materials", logo, { sortOrder: index }, a, "调整项目 Logo 顺序");
       }
       return { ok: true };
     });
@@ -143,15 +163,10 @@ export class ProjectsService extends ResourceService {
       isCurrent: true,
       ...(!internal(a) ? { visibility: "SHARED" } : {}),
     };
-    const image =
-      (await this.db.material.findFirst({
-        where: { ...imageFilter, category: "PHOTO" },
-        orderBy: { createdAt: "desc" },
-      })) ??
-      (await this.db.material.findFirst({
-        where: { ...imageFilter, category: "LOGO" },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
-      }));
+    const image = await this.db.material.findFirst({
+      where: { ...imageFilter, category: { in: ["PHOTO", "LOGO"] } },
+      orderBy: [{ sortOrder: "asc" }, { category: "asc" }, { createdAt: "asc" }],
+    });
     x.coverUrl = image
       ? await this.storage.previewUrl(
           {
@@ -172,7 +187,7 @@ export class ProjectsService extends ResourceService {
         isCurrent: true,
         ...(!internal(a) ? { visibility: "SHARED" } : {}),
       },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      orderBy: [{ sortOrder: "asc" }, { category: "asc" }, { createdAt: "asc" }],
     });
     return {
       ...project,

@@ -13,6 +13,11 @@ const ProjectExtraSchema = z
     nearbySchools: opt,
     website: z.url().optional(),
     salesOffice: opt,
+    floorCount: z.number().int().min(1).nullable().optional(),
+    completionYear: z.number().int().min(1800).max(2200).nullable().optional(),
+    ownership: opt,
+    parking: opt,
+    mtrStation: opt,
   })
   .passthrough();
 
@@ -38,7 +43,6 @@ export const ProjectsSchema = z.object({
         floor: text,
         area: money,
         layout: text,
-        age: z.number().int().min(0).max(999),
         minRent: money,
         maxRent: money,
         referenceRent: money,
