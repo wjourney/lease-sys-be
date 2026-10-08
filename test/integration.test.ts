@@ -373,7 +373,7 @@ test("full workflow and authorization invariants", async (t) => {
     );
     assert.equal(caseInsensitive.total, 4);
     const projectDetail = await sales.call("GET", "/projects/" + hidden.projectId);
-    assert.deepEqual(projectDetail.operations, []);
+    assert.equal(projectDetail.operations, undefined);
     const orderDetail = await sales.call("GET", "/orders/" + order.id);
     assert(
       orderDetail.operations.every(
@@ -748,14 +748,10 @@ test("full workflow and authorization invariants", async (t) => {
         { revision: p.revision, name: "覆盖" },
         409,
       );
-      const history = await admin.call(
-        "GET",
-        "/projects/" + p.id + "/operations",
-      );
-      assert.equal(history.length, 2);
-      assert.equal(history[1].changes.name.after, revised.name);
+      await admin.call("GET", "/projects/" + p.id + "/operations", undefined, 404);
       const detail = await admin.call("GET", "/projects/" + p.id);
-      assert.deepEqual(detail.operations, history);
+      assert.equal(detail.name, revised.name);
+      assert.equal(detail.operations, undefined);
       await admin.call("DELETE", "/projects/" + p.id, { reason: "测试完成" });
       await admin.call("GET", "/projects/" + p.id, undefined, 404);
     },

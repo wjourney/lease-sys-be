@@ -179,7 +179,10 @@ export class ProjectsService extends ResourceService {
     return x;
   }
   async detail(a: Actor, key: string) {
-    const project = await super.detail(a, key);
+    const project = await this.enrich(
+      a,
+      await this.access.get(a, this.resource, key),
+    );
     const materials = await this.db.material.findMany({
       where: {
         projectId: key,

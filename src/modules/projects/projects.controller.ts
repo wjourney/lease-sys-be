@@ -26,9 +26,6 @@ export class ProjectsController {
     res.setHeader("Content-Disposition", 'attachment; filename="projects.csv"');
     res.send(await this.service.export(r.actor, q));
   }
-  @Get(":id/operations") operations(@Req() r: any, @Param("id") id: string) {
-    return this.service.operations(r.actor, id);
-  }
   @Get(":id") detail(@Req() r: any, @Param("id") id: string) {
     return this.service.detail(r.actor, id);
   }
