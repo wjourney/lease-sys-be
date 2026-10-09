@@ -69,11 +69,7 @@ export class OrdersService extends ResourceService {
       expenses,
       commissions,
     );
-    result.lifecycleStatus = result.settlement.complete
-      ? "SETTLED"
-      : row.handoverStatus === "DONE"
-        ? "SETTLING"
-        : "HANDOVER_PENDING";
+    result.lifecycleStatus = "ENDED";
     return result;
   }
   async deletionPreview(a: Actor, key: string) {

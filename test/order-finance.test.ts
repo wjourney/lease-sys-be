@@ -183,6 +183,8 @@ function matches(row: any, where: any): boolean {
           return typeof got === "string" && got.startsWith(v);
         if (op === "lt") return got < v;
         if (op === "lte") return got <= v;
+        if (op === "gt") return got > v;
+        if (op === "gte") return got >= v;
         throw new Error(`Unsupported filter ${op}`);
       });
     return got === value;
@@ -532,7 +534,9 @@ test("all rejected receipts unlock lease editing and cancellation despite histor
   const details = new OrderDetailService(f.db, f.access, {} as any);
   const related = await details.related(admin, f.tables.order[0]);
   assert.equal(related.actions.editLease, true);
-  assert.equal(related.actions.close, true);
+  assert.equal(related.actions.close, false);
+  assert.equal(related.actions.moveIn, false);
+  assert.equal(related.actions.renew, true);
   f.tables.commission.push({
     id: randomUUID(),
     orderId: f.order.id,
@@ -595,7 +599,7 @@ for (const status of ["PENDING", "ACTIVE"]) test(`partial payment does not block
   await f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" });
   assert.equal(f.tables.order[0].status, status);
   await assert.rejects(f.lifecycle.close(admin, f.order.id), /已有收款/);
-  const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-10-10", reason: "租客提前退租" });
+  const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-10-08", reason: "租客提前退租" });
   assert.equal(ended.status, "COMPLETED");
   assert.equal((await f.balances.totals(f.db, bill.id)).confirmed.toString(), "60");
 });
@@ -749,4 +753,130 @@ test("cancelling a partially paid lease before its start issues a rent refund wi
   assert.equal(f.tables.expense[0].feeType, "RENT_REFUND");
   assert.equal(f.tables.expense[0].amount.toString(), "60");
   assert.equal((await f.balances.totals(f.db, bill.id)).confirmed.toString(), "60");
+});
+
+test("renewal defaults to one year after the old expiry and preserves paid history", async () => {
+  const f = editableFixture();
+  f.order.billingVersion = 2;
+  f.order.nextBillOn = null;
+  const billing = new RentBillingService(f.db, f.access);
+  await billing.fullTerm(f.db, f.order, admin);
+  await f.receipts.receipt(operations, f.tables.income[0].id, { ...f.payment, amount: "60" });
+  const before = JSON.parse(JSON.stringify(f.tables));
+  const revision = f.tables.order[0].revision;
+  const saved = await f.lifecycle.renew(admin, f.order.id, { revision });
+  assert.equal(saved.id, f.order.id);
+  assert.equal(saved.endsOn.toISOString().slice(0, 10), "2028-09-30");
+  assert.equal(saved.nextBillOn, null);
+  const oldIds = new Set(before.income.map((r: any) => r.id));
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables.income.filter(r => oldIds.has(r.id)))), before.income);
+  const added = f.tables.income.filter(r => !oldIds.has(r.id));
+  assert.equal(added.length, 12);
+  assert.equal(added[0].periodStart.toISOString().slice(0, 10), "2027-10-01");
+  assert.equal(added[11].periodEnd.toISOString().slice(0, 10), "2028-09-30");
+  for (const name of ["commission", "expense", "invoice"]) assert.deepEqual(JSON.parse(JSON.stringify(f.tables[name])), before[name]);
+  assert.equal(saved.depositAmount, "200");
+  assert.match(saved.operationLogs.at(-1).reason, /续约/);
+  await assert.rejects(f.lifecycle.renew(admin, f.order.id, { revision }), /订单已更新/);
+  assert.equal(f.tables.income.length, before.income.length + 12);
+});
+
+test("custom renewal after a partial month appends continuous periods without repricing the old final bill", async () => {
+  const f = editableFixture();
+  Object.assign(f.order, { billingVersion: 2, endsOn: new Date("2027-02-15"), nextBillOn: null });
+  await new RentBillingService(f.db, f.access).fullTerm(f.db, f.order, admin);
+  const original = JSON.parse(JSON.stringify(f.tables.income));
+  await f.lifecycle.renew(admin, f.order.id, { revision: 1, endsOn: "2027-03-31" });
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables.income.slice(0, original.length))), original);
+  const added = f.tables.income.slice(original.length);
+  assert.equal(added.length, 2);
+  assert.equal(added[0].periodStart.toISOString().slice(0, 10), "2027-02-16");
+  assert.equal(added[0].periodEnd.toISOString().slice(0, 10), "2027-02-28");
+  assert.equal(added[1].periodStart.toISOString().slice(0, 10), "2027-03-01");
+  assert.equal(added[1].periodEnd.toISOString().slice(0, 10), "2027-03-31");
+});
+
+test("renewal appends monthly commission while preserving already paid commission", async () => {
+  const f = editableFixture();
+  f.order.billingVersion = 2;
+  f.tables.commission.length = 0;
+  await f.lifecycle.editOrder(admin, f.order.id, { revision: 1, commission: { mode: "RECURRING_MONTHLY", amount: "50", dueOn: "2026-10-10" } });
+  f.tables.commission[0].status = "PAID";
+  f.tables.expense.push({ commissionId: f.tables.commission[0].id, status: "PAID", paidAmount: "50" });
+  const before = JSON.parse(JSON.stringify(f.tables.commission));
+  await f.lifecycle.renew(admin, f.order.id, { revision: f.tables.order[0].revision });
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables.commission.slice(0, 12))), before);
+  assert.equal(f.tables.commission.length, 24);
+  assert.equal(f.tables.commission[12].periodStart.toISOString().slice(0, 10), "2027-10-01");
+  assert.equal(f.tables.commission[12].dueOn.toISOString().slice(0, 10), "2027-10-10");
+});
+
+for (const endsOn of ["2027-09-30", "2027-09-29", "2076-10-01"]) test(`renewal rejects invalid or excessive expiry ${endsOn} without writes`, async () => {
+  const f = editableFixture();
+  const before = JSON.parse(JSON.stringify(f.tables));
+  await assert.rejects(f.lifecycle.renew(admin, f.order.id, { revision: 1, endsOn }));
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables)), before);
+});
+
+test("renewal rejects conflicting future leases, ended orders and unauthorized actors", async () => {
+  const f = editableFixture();
+  f.tables.order.push({ ...f.order, id: randomUUID(), startsOn: new Date("2027-10-01"), endsOn: new Date("2027-12-31") });
+  await assert.rejects(f.lifecycle.renew(admin, f.order.id, { revision: 1 }), /已被占用/);
+  assert.equal(f.tables.income.length, 2);
+  f.tables.order.length = 1;
+  f.tables.order[0].status = "COMPLETED";
+  await assert.rejects(f.lifecycle.renew(admin, f.order.id, { revision: 1 }), /仅进行中/);
+  await assert.rejects(f.lifecycle.renew({ ...admin, role: "SALES" }, f.order.id, { revision: 1 }));
+});
+
+test("expiry occurs at Hong Kong midnight, releases occupancy, and needs no handover", async () => {
+  const f = fixture();
+  Object.assign(f.tables.order[0], { endsOn: new Date("2026-10-02"), nextBillOn: null });
+  const jobs = new JobsService(f.db, f.access, {} as any);
+  await jobs.generateDue(admin, new Date("2026-10-02T15:59:59Z"));
+  assert.equal(f.tables.order[0].status, "ACTIVE");
+  await jobs.generateDue(admin, new Date("2026-10-02T16:00:00Z"));
+  assert.equal(f.tables.order[0].status, "COMPLETED");
+  assert.equal(f.tables.order[0].occupancyState, "RELEASED");
+  const logs = f.tables.order[0].operationLogs.length;
+  await jobs.generateDue(admin, new Date("2026-10-03T16:00:00Z"));
+  assert.equal(f.tables.order[0].operationLogs.length, logs);
+});
+
+test("expiry job rechecks locked end date after a concurrent renewal", async () => {
+  const f = fixture();
+  Object.assign(f.tables.order[0], { endsOn: new Date("2026-10-02"), nextBillOn: null });
+  const findMany = f.db.order.findMany;
+  let raced = false;
+  f.db.order.findMany = async (query: any) => {
+    const result = await findMany(query);
+    if (!raced && query.where.endsOn) {
+      raced = true;
+      f.tables.order[0].endsOn = new Date("2027-10-02");
+    }
+    return result;
+  };
+  await new JobsService(f.db, f.access, {} as any).generateDue(admin, new Date("2026-10-05"));
+  assert.equal(f.tables.order[0].status, "ACTIVE");
+  assert.notEqual(f.tables.order[0].occupancyState, "RELEASED");
+});
+
+test("legacy ended units are released without a separate handover step", async () => {
+  const f = fixture();
+  Object.assign(f.tables.order[0], { status: "COMPLETED", nextBillOn: null });
+  await new JobsService(f.db, f.access, {} as any).generateDue(admin, new Date("2026-10-05"));
+  assert.equal(f.tables.order[0].occupancyState, "RELEASED");
+  assert.match(f.tables.order[0].operationLogs.at(-1).reason, /释放单位/);
+});
+
+test("early termination immediately releases the unit without affecting receipt history", async () => {
+  const f = fixture();
+  const saved = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-10-08", revision: 1 });
+  assert.equal(saved.status, "COMPLETED");
+  assert.equal(saved.occupancyState, "RELEASED");
+  assert.equal(saved.nextBillOn, null);
+  assert.equal(saved.actualTerminationOn.toISOString().slice(0, 10), "2026-10-08");
+  const tomorrow = new Date(); tomorrow.setUTCDate(tomorrow.getUTCDate() + 2);
+  const next = fixture();
+  await assert.rejects(next.lifecycle.terminate(admin, next.order.id, { date: tomorrow.toISOString().slice(0, 10) }), /不能晚于今天/);
 });

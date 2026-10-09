@@ -691,24 +691,15 @@ test("full workflow and authorization invariants", async (t) => {
     await sales.call("POST", "/invoices/bills/" + root.id + "/download", {}, 403);
   });
   await t.test(
-    "termination, handover and deposit settlement are distinct",
+    "ending a lease releases the unit and permits deposit settlement directly",
     async () => {
       await operations.call(
         "POST",
         "/orders/" + order.id + "/terminate",
-        { date: "2027-08-31", reason: "提前退租" },
+        { date: "2026-10-08", reason: "提前结束租约" },
         201,
       );
-      assert.notEqual(
-        (await admin.call("GET", "/orders/" + order.id)).occupancyState,
-        "RELEASED",
-      );
-      await operations.call(
-        "POST",
-        "/orders/" + order.id + "/handover",
-        { note: "钥匙及物品核对完成" },
-        201,
-      );
+
       assert.equal(
         (await admin.call("GET", "/orders/" + order.id)).occupancyState,
         "RELEASED",
@@ -1138,7 +1129,7 @@ test("full workflow and authorization invariants", async (t) => {
     for(const r of initialReceipts) await finance.call("POST",`/incomes/${r.id}/reverse`,{reason:"金额需重新登记"},201);
     detail=await admin.call("GET",`/orders/${created.id}`);
     assert.equal(detail.actions.editLease,true);
-    assert.equal(detail.actions.close,true);
+    assert.equal(detail.actions.close,false);
     assert.equal(detail.registrationNoType, "BR");
     assert.equal(detail.depositPlan, "TWO_ONE");
     assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
@@ -1486,12 +1477,12 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         salesUserId: order.salesUserId,
         tenantType: "PERSON",
         tenantName: "结算租客",
-        startsOn: "2026-11-01",
-        endsOn: "2026-11-30",
+        startsOn: "2026-09-01",
+        endsOn: "2026-09-30",
         monthlyRent: "1000",
         depositAmount,
         depositPlan: "OTHER",
-        commission: { mode: "ONE_TIME", dueOn: "2026-11-10", amount: "100" },
+        commission: { mode: "ONE_TIME", dueOn: "2026-09-10", amount: "100" },
       },
       201,
     );
@@ -1505,7 +1496,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       `/incomes/${bill.id}/receipts`,
       {
         amount,
-        receivedOn: "2026-11-01",
+        receivedOn: "2026-09-01",
         fundAccountId: account.id,
         paymentMethod: "BANK",
         payerName: "结算租客",
@@ -1516,19 +1507,14 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
     await finance.call("POST", `/incomes/${r.id}/confirm`, undefined, 201);
     return r;
   }
-  async function end(id: string, date = "2026-11-30") {
+  async function end(id: string, date = "2026-09-30") {
     await admin.call(
       "POST",
       `/orders/${id}/terminate`,
       { date, reason: "退租核算" },
       201,
     );
-    await admin.call(
-      "POST",
-      `/orders/${id}/handover`,
-      { date, note: "已交还钥匙" },
-      201,
-    );
+
   }
   await t.test(
     "rent edits preserve deposit bills; offsets and partial refunds keep one ledger",
@@ -1581,7 +1567,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         `/orders/${o.id}/fees`,
         {
           amount: "900",
-          dueOn: "2026-11-15",
+          dueOn: "2026-09-15",
           remark: "水电费用",
           sourceKey: crypto.randomUUID(),
         },
@@ -1593,7 +1579,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         { deductionAmount: "0", reason: "未交还" },
         400,
       );
-      await end(o.id, "2026-11-15");
+      await end(o.id, "2026-09-15");
       o = await detail(o.id);
       const ended = await admin.call("GET", "/orders?status=ENDED&pageSize=100");
       assert(ended.items.some((order: any) => order.id === o.id));
@@ -1658,7 +1644,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       const pay = {
         amount: "400",
         sourceKey: randomUUID(),
-        paidOn: "2026-11-16",
+        paidOn: "2026-09-16",
         fundAccountId: account.id,
         paymentMethod: "BANK",
       };
@@ -1880,4 +1866,55 @@ test("HTTP batch creation assigns per-row media and supports a full 100-row payl
   assert.equal((await admin.call("GET", `/materials?unitId=${result.unitIds[1]}`)).total, 0);
   assert.equal((await admin.call("GET", `/materials?unitId=${result.unitIds[2]}`)).total, 1);
   assert.equal((await admin.call("POST", "/units/batch", body, 201)).replayed, true);
+});
+
+test("renewal API extends the same order, appends bills once and releases the unit on early end", async () => {
+  await admin.login("admin");
+  await operations.login("operations");
+  await finance.login("finance");
+  const template = await admin.call("GET", `/units/${order.unitId}`);
+  const unit = await admin.call("POST", "/units", {
+    projectId: template.projectId, unitTypeCode: template.unitTypeCode,
+    roomNo: `续约回归-${randomUUID().slice(0, 8)}`, minLeaseMonths: 1,
+  }, 201);
+  const original = await admin.call("POST", "/orders", {
+    projectId: template.projectId, unitId: unit.id, tenantName: "续约回归租客",
+    startsOn: "2026-10-01", endsOn: "2027-09-30", monthlyRent: "1000",
+    depositAmount: "2000", depositPlan: "TWO_ONE",
+  }, 201);
+  const history = original.bills.map((b: any) => ({ id: b.id, amount: b.amount, status: b.status, periodStart: b.periodStart, periodEnd: b.periodEnd }));
+  await finance.call("POST", `/orders/${original.id}/renew`, { revision: original.revision }, 403);
+  const renewed = await operations.call("POST", `/orders/${original.id}/renew`, { revision: original.revision }, 201);
+  assert.equal(renewed.id, original.id);
+  assert.equal(renewed.endsOn.slice(0, 10), "2028-09-30");
+  assert.equal(renewed.status, "ACTIVE");
+  assert.equal(renewed.actions.renew, true);
+  assert.equal(renewed.actions.moveIn, false);
+  assert.equal(renewed.actions.handover, false);
+  const ids = new Set(history.map((b: any) => b.id));
+  assert.deepEqual(renewed.bills.filter((b: any) => ids.has(b.id)).map((b: any) => ({ id: b.id, amount: b.amount, status: b.status, periodStart: b.periodStart, periodEnd: b.periodEnd })), history);
+  const added = renewed.bills.filter((b: any) => !ids.has(b.id));
+  assert.equal(added.length, 12);
+  assert.equal(added[0].periodStart.slice(0, 10), "2027-10-01");
+  assert.equal(added[11].periodEnd.slice(0, 10), "2028-09-30");
+  assert.notEqual(renewed.currentContractMaterialId, original.currentContractMaterialId);
+  await operations.call("POST", `/orders/${original.id}/renew`, { revision: original.revision }, 409);
+  const results = await Promise.all([1, 2].map(async () => {
+    const response = await fetch(base + `/orders/${original.id}/renew`, {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: operations.cookies, "X-CSRF-Token": operations.csrf },
+      body: JSON.stringify({ revision: renewed.revision, endsOn: "2028-12-31" }),
+    });
+    return response.status;
+  }));
+  assert.deepEqual(results.sort(), [201, 409]);
+  const current = await admin.call("GET", `/orders/${original.id}`);
+  assert.equal(current.endsOn.slice(0, 10), "2028-12-31");
+  assert.equal(current.bills.filter((b: any) => b.feeType === "RENT").length, 27);
+  await operations.call("POST", `/orders/${original.id}/terminate`, { revision: current.revision, date: "2026-10-08" }, 201);
+  const ended = await admin.call("GET", `/orders/${original.id}`);
+  assert.equal(ended.status, "COMPLETED");
+  assert.equal(ended.occupancyState, "RELEASED");
+  assert.equal(ended.actions.renew, false);
+  assert.equal(ended.actions.terminate, false);
+  assert.equal(ended.actions.settle, true);
 });

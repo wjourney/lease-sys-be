@@ -63,6 +63,7 @@ export class OrderDetailService {
           editLease: rights.write.includes("orders"),
           close: false,
           moveIn: false,
+          renew: false,
           terminate: false,
           handover: false,
           settle: false,
@@ -141,7 +142,7 @@ export class OrderDetailService {
           ? refundDue.gt(0)
             ? "REFUND_PENDING"
             : "SETTLED"
-          : order.handoverStatus === "DONE"
+          : order.status === "COMPLETED"
             ? "SETTLEMENT_PENDING"
             : received.lt(order.depositAmount)
               ? "COLLECTING"
@@ -285,21 +286,14 @@ export class OrderDetailService {
           rights.write.includes("orders") &&
           orderInProgress(order.status) &&
           !hasPayments,
-        close:
-          rights.write.includes("orders") &&
-          orderInProgress(order.status) &&
-          !hasPayments,
-        moveIn:
-          rights.manageOrders && orderInProgress(order.status) && !order.moveInOn,
+        close: false,
+        moveIn: false,
+        renew: rights.manageOrders && orderInProgress(order.status),
         terminate: rights.manageOrders && orderInProgress(order.status),
-        handover:
-          rights.manageOrders &&
-          order.status === "COMPLETED" &&
-          order.handoverStatus !== "DONE",
+        handover: false,
         settle:
           rights.finance &&
           order.status === "COMPLETED" &&
-          order.handoverStatus === "DONE" &&
           !order.depositSettledAt &&
           pending.eq(0),
         refund: rights.finance && refundDue.gt(0),

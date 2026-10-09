@@ -41,8 +41,7 @@ export class DepositSettlementService {
       async (tx) => {
         await lock(tx, "orders", key);
         const o = await this.access.get(a, "orders", key, tx);
-        if (o.status !== "COMPLETED" || o.handoverStatus !== "DONE")
-          fail("交还完成后才能结算押金");
+        if (o.status !== "COMPLETED") fail("租约结束后才能结算押金");
         const items =
           d.items ??
           (number(d.deductionAmount).gt(0)

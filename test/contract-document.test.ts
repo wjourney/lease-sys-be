@@ -33,7 +33,9 @@ const unit = { unitNo: "A座 201" };
 
 test("contract has detailed terms, key values and signature sections", () => {
   const html = contractHtml(order, project, unit);
-  assert.equal(CONTRACT_DOCUMENT_VERSION, 2);
+  assert.equal(CONTRACT_DOCUMENT_VERSION, 3);
+  assert.ok(!html.includes("预计入住"));
+  assert.ok(!html.includes("办理入住日期"));
   for (const text of [
     "示例业主",
     "示例科技有限公司",

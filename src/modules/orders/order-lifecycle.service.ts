@@ -1,3 +1,4 @@
+import { leaseToday } from "../../common/utils/lease-date";
 import { orderInProgress } from "../../common/utils/order-status";
 import { ReceiptsService } from "../incomes/receipts.service";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
@@ -435,27 +436,11 @@ export class OrderLifecycleService {
         id: exclude ? { not: exclude } : undefined,
         status: { not: "CLOSED" },
         occupancyState: { not: "RELEASED" },
-        OR: [
-          { startsOn: { lte: end }, endsOn: { gte: start } },
-          {
-            status: { in: ["PENDING", "ACTIVE", "COMPLETED"] },
-            endsOn: {
-              lt: new Date(
-                Math.min(
-                  start.getTime(),
-                  new Date(new Date().toISOString().slice(0, 10)).getTime(),
-                ),
-              ),
-            },
-            handoverStatus: { not: "DONE" },
-          },
-        ],
+        startsOn: { lte: end },
+        endsOn: { gte: start },
       },
     });
-    if (collision)
-      throw new ConflictException(
-        "该单位在所选租期已被占用，或前一租客尚未交还",
-      );
+    if (collision) throw new ConflictException("该单位在所选租期已被占用");
   }
   async editOrder(a: Actor, key: string, body: any) {
     this.access.allow(a, "orders", true);
@@ -746,18 +731,132 @@ export class OrderLifecycleService {
       { timeout: 30000 },
     );
   }
+  async renew(a: Actor, key: string, body: any) {
+    demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
+    this.access.allow(a, "orders", true);
+    const d = z
+      .object({
+        revision: z.number().int().min(1),
+        endsOn: date.optional(),
+      })
+      .strict()
+      .parse(body);
+    return this.db.$transaction(
+      async (tx) => {
+        const first = await this.access.get(a, "orders", key, tx);
+        if (first.unitId) await lock(tx, "units", first.unitId);
+        await lock(tx, "orders", key);
+        const o = await this.access.get(a, "orders", key, tx);
+        if (o.revision !== d.revision)
+          throw new ConflictException("订单已更新，请刷新后重新续约");
+        if (!orderInProgress(o.status)) fail("仅进行中的订单可续约");
+        if (
+          !o.unitId ||
+          !o.projectId ||
+          !o.endsOn ||
+          !number(o.monthlyRent).gt(0)
+        )
+          fail("请先完善租约资料再续约");
+        const endsOn = d.endsOn ?? plusMonths(o.endsOn, 12);
+        if (endsOn <= o.endsOn) fail("新到期日须晚于原到期日");
+        if (endsOn >= plusMonths(o.startsOn, 600))
+          fail("租期最多支持 600 个月");
+        const start = dayAfter(o.endsOn);
+        await this.checkOccupancy(tx, o.unitId, start, endsOn, key);
+        const saved = await update(
+          tx,
+          "orders",
+          o,
+          { endsOn, nextBillOn: null },
+          a,
+          `续约：原到期日 ${o.endsOn.toISOString().slice(0, 10)}，新到期日 ${endsOn.toISOString().slice(0, 10)}`,
+        );
+        // Append from the OLD expiry, including a fragment after a partial final month.
+        // Never regenerate, reprice or revive any historical bill or receipt.
+        let cursor = start;
+        while (cursor <= endsOn) {
+          const bill = await this.billing.bill(tx, saved, cursor, a);
+          if (bill.next <= cursor) fail("账期生成失败");
+          cursor = bill.next;
+        }
+        await this.appendRenewalCommissions(tx, a, saved, start);
+        return saved;
+      },
+      { timeout: 30000 },
+    );
+  }
+  private async appendRenewalCommissions(
+    tx: any,
+    a: Actor,
+    o: any,
+    start: Date,
+  ) {
+    const records = await tx.commission.findMany({
+      where: { orderId: o.id, deletedAt: null, status: { not: "VOID" } },
+      orderBy: { periodStart: "asc" },
+    });
+    // One-off commission is not charged again by extending an existing order.
+    const monthly = records
+      .filter((c: any) => c.mode === "RECURRING_MONTHLY")
+      .sort(
+        (a: any, b: any) => a.periodStart.getTime() - b.periodStart.getTime(),
+      );
+    if (!monthly.length || !o.salesCompanyId || !o.salesUserId) return;
+    const first = monthly[0],
+      last = monthly[monthly.length - 1];
+    const months =
+      (start.getUTCFullYear() - o.startsOn.getUTCFullYear()) * 12 +
+      start.getUTCMonth() -
+      o.startsOn.getUTCMonth();
+    for (let index = 0; plusMonths(start, index) <= o.endsOn; index++) {
+      const periodStart = plusMonths(start, index);
+      const periodEnd = new Date(
+        Math.min(
+          plusMonths(start, index + 1).getTime() - 86400000,
+          o.endsOn.getTime(),
+        ),
+      );
+      await insert(
+        tx,
+        "commissions",
+        {
+          orderId: o.id,
+          salesCompanyId: o.salesCompanyId,
+          salesUserId: o.salesUserId,
+          commissionNo: serial("CM"),
+          mode: "RECURRING_MONTHLY",
+          status: "OPEN",
+          periodStart,
+          periodEnd,
+          dueOn: plusMonths(first.dueOn, months + index),
+          amount: last.amount,
+          remark: last.remark,
+        },
+        a,
+      );
+    }
+  }
   async terminate(a: Actor, key: string, body: any) {
     demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role));
     const d = z
-      .object({ date, reason: z.string().min(1) })
+      .object({
+        date,
+        reason: z.string().trim().max(500).optional(),
+        revision: z.number().int().optional(),
+      })
       .strict()
       .parse(body);
     return this.db.$transaction(async (tx) => {
+      const first = await this.access.get(a, "orders", key, tx);
+      if (first.unitId) await lock(tx, "units", first.unitId);
       await lock(tx, "orders", key);
       const o = await this.access.get(a, "orders", key, tx);
-      if (!orderInProgress(o.status)) fail("仅进行中的订单可退租");
-      if (d.date > o.endsOn) fail("退租日期不能晚于租期结束日期");
-      if (d.date < o.startsOn && o.moveInOn) fail("已登记入住的订单不能按起租前取消处理");
+      if (d.revision !== undefined && d.revision !== o.revision)
+        throw new ConflictException("订单已更新，请刷新后重试");
+      if (!orderInProgress(o.status)) fail("仅进行中的订单可提前结束租约");
+      if (d.date > o.endsOn) fail("结束日期不能晚于租期结束日期");
+      if (d.date > leaseToday()) fail("实际结束日期不能晚于今天");
+      d.reason ||= "提前结束租约";
       // Recalculate only generated rent periods. Confirmed receipts are immutable.
       const bills = await tx.income.findMany({
         where: {
@@ -846,7 +945,14 @@ export class OrderLifecycleService {
         tx,
         "orders",
         o,
-        { status: "COMPLETED", actualTerminationOn: d.date, nextBillOn: null },
+        {
+          status: "COMPLETED",
+          actualTerminationOn: d.date,
+          nextBillOn: null,
+          occupancyState: "RELEASED",
+          handoverStatus: "DONE",
+          handedOverAt: d.date,
+        },
         a,
         d.reason,
       );
@@ -1025,7 +1131,8 @@ export class OrderLifecycleService {
       await lock(tx, "units", o.unitId);
       await lock(tx, "orders", key);
       const fresh = await this.access.get(a, "orders", key, tx);
-      if (!orderInProgress(fresh.status)) fail("仅未登记收款的进行中订单可关闭");
+      if (!orderInProgress(fresh.status))
+        fail("仅未登记收款的进行中订单可关闭");
       const roots = await tx.income.findMany({
         where: { orderId: key, recordType: "RECEIVABLE" },
       });

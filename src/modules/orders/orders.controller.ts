@@ -71,6 +71,27 @@ export class OrdersController {
   @Post(":id/close") close(@Req() r: any, @Param("id") key: string) {
     return this.lifecycle.close(r.actor, key);
   }
+  @Post(":id/renew") async renew(
+    @Req() r: any,
+    @Param("id") key: string,
+    @Body() body: any,
+  ) {
+    await this.lifecycle.renew(r.actor, key, body);
+    let contractGenerationPending = false;
+    try {
+      await this.contracts.ensure(r.actor, key);
+    } catch (error) {
+      contractGenerationPending = true;
+      this.logger.warn(
+        `Order ${key} renewed; contract generation needs retry`,
+        error,
+      );
+    }
+    return {
+      ...(await this.service.detail(r.actor, key)),
+      contractGenerationPending,
+    };
+  }
   @Post(":id/terminate") terminate(
     @Req() r: any,
     @Param("id") key: string,

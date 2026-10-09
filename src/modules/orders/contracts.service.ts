@@ -24,7 +24,6 @@ function orderContractSnapshot(o: any) {
     depositAmount: o.depositAmount,
     paymentIntervalMonths: o.paymentIntervalMonths,
     rentDueDay: o.rentDueDay,
-    moveInOn: o.moveInOn,
     remark: o.remark,
   });
 }

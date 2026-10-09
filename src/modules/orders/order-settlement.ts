@@ -42,7 +42,6 @@ export function orderSettlement(
           .lt(c.amount)),
   ).length;
   const blockers = [
-    ...(order.handoverStatus !== "DONE" ? ["单位尚未交还"] : []),
     ...(outstanding.length ? [`${outstanding.length} 笔账单未结清`] : []),
     ...(pending ? [`${pending} 笔收款待核对`] : []),
     ...(!order.depositSettledAt ? ["押金尚未结算"] : []),

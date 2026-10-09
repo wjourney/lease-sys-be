@@ -1,4 +1,8 @@
-import { orderInProgress, inProgressOrderStatuses } from "../../common/utils/order-status";
+import { leaseToday } from "../../common/utils/lease-date";
+import {
+  orderInProgress,
+  inProgressOrderStatuses,
+} from "../../common/utils/order-status";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, financial } from "../../common/auth/actor";
@@ -20,26 +24,38 @@ export class JobsService {
   ) {}
   async generateDue(a: Actor, now = new Date()) {
     demand(financial(a));
+    const cutoff = leaseToday(now);
     const expired = await this.db.order.findMany({
       where: {
         status: { in: inProgressOrderStatuses },
         deletedAt: null,
         endsOn: {
-          lt: new Date(now.getTime() - 86400000),
+          lt: cutoff,
         },
       },
     });
     for (const o of expired)
       await this.db.$transaction(async (tx) => {
+        if (o.unitId) await lock(tx, "units", o.unitId);
         await lock(tx, "orders", o.id);
         let current = await tx.order.findUnique({
           where: {
             id: o.id,
           },
         });
+        // Renewal can race the expiry scan. Check the locked current end date.
+        if (
+          !current ||
+          !orderInProgress(current.status) ||
+          current.deletedAt ||
+          current.endsOn >= cutoff
+        )
+          return;
         // Catch up every due period before stopping the schedule at expiry.
         while (
-          current && orderInProgress(current.status) && !current.deletedAt &&
+          current &&
+          orderInProgress(current.status) &&
+          !current.deletedAt &&
           current.nextBillOn &&
           current.nextBillOn <= current.endsOn
         ) {
@@ -61,12 +77,47 @@ export class JobsService {
             {
               status: "COMPLETED",
               nextBillOn: null,
+              occupancyState: "RELEASED",
+              handoverStatus: "DONE",
+              handedOverAt: current.endsOn,
             },
             a,
-            "租期结束，待登记交还",
+            "租期到期自动结束，释放单位",
           );
       });
-    const cutoff = new Date(now.toISOString().slice(0, 10) + "T00:00:00Z");
+    // Release legacy ended orders too, so removing the handover UI cannot strand units.
+    const legacyEnded = await this.db.order.findMany({
+      where: {
+        status: "COMPLETED",
+        deletedAt: null,
+        occupancyState: { not: "RELEASED" },
+      },
+    });
+    for (const o of legacyEnded)
+      await this.db.$transaction(async (tx) => {
+        if (o.unitId) await lock(tx, "units", o.unitId);
+        await lock(tx, "orders", o.id);
+        const current = await tx.order.findUnique({ where: { id: o.id } });
+        if (
+          current &&
+          current.status === "COMPLETED" &&
+          !current.deletedAt &&
+          current.occupancyState !== "RELEASED"
+        )
+          await update(
+            tx,
+            "orders",
+            current,
+            {
+              occupancyState: "RELEASED",
+              handoverStatus: "DONE",
+              handedOverAt: current.actualTerminationOn ?? current.endsOn,
+              nextBillOn: null,
+            },
+            a,
+            "已结束租约释放单位",
+          );
+      });
     const orders = await this.db.order.findMany({
       where: {
         status: {
@@ -89,7 +140,9 @@ export class JobsService {
             },
           });
           while (
-            o && orderInProgress(o.status) && !o.deletedAt &&
+            o &&
+            orderInProgress(o.status) &&
+            !o.deletedAt &&
             o.nextBillOn &&
             o.nextBillOn <= o.endsOn &&
             o.nextBillOn.getTime() - o.billLeadDays * 86400000 <=

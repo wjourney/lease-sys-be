@@ -25,7 +25,7 @@ function profileValue(profile: Record<string, unknown>, keys: string[]) {
   }
 }
 
-export const CONTRACT_DOCUMENT_VERSION = 2;
+export const CONTRACT_DOCUMENT_VERSION = 3;
 
 export function contractHtml(
   order: any,
@@ -83,7 +83,7 @@ export function contractHtml(
       "物业用途、可否分租或转租，以及装修或改动的条件，由双方在签署前确认。",
     ]),
     clause(2, "租期与交付", [
-      `租期自 ${date(order.startsOn)} 起至 ${date(order.endsOn)} 止。预计办理入住日期为 ${date(order.moveInOn)}；具体交付日期及交付状态以双方确认的记录为准。`,
+      `租期自 ${date(order.startsOn)} 起至 ${date(order.endsOn)} 止。具体交付安排以双方确认的记录为准。`,
       "交付时，双方应核对物业现状、钥匙、家具设备及水电表读数，并在交接清单上签署。",
     ]),
     clause(3, "租金及付款安排", [
@@ -135,7 +135,7 @@ export function contractHtml(
       <tr><th>租期开始</th><td>${date(order.startsOn)}</td><th>租期结束</th><td>${date(order.endsOn)}</td></tr>
       <tr><th>每月租金</th><td>${esc(rent)}</td><th>押金</th><td>${esc(deposit)}</td></tr>
       <tr><th>付款频率</th><td>每 ${interval} 个月</td><th>交租日</th><td>每月 ${esc(shown(order.rentDueDay))} 日</td></tr>
-      <tr><th>押付方式</th><td>${esc(plan)}</td><th>预计入住</th><td>${date(order.moveInOn)}</td></tr>
+      <tr><th>押付方式</th><td colspan="3">${esc(plan)}</td></tr>
       <tr><th>首期不足月</th><td>${firstProration}</td><th>末期不足月</th><td>${lastProration}</td></tr>
     </table></div>
     <div class="section"><div class="section-title">三、合同条款</div>${templateBody?.trim() ? `<div class="template-terms">${esc(templateBody.trim())}</div>` : defaultClauses}</div>
