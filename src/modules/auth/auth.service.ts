@@ -1,5 +1,7 @@
 import {
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   UnauthorizedException,
@@ -46,7 +48,7 @@ export class AuthService {
     const key = ip + ":" + data.username;
     const t = attempts.get(key);
     if (t && t.until > Date.now() && t.count >= 10)
-      throw new ForbiddenException("尝试过多，请 15 分钟后重试");
+      throw new HttpException("尝试过多，请 15 分钟后重试", HttpStatus.TOO_MANY_REQUESTS);
     const user = await this.db.user.findUnique({
       where: {
         username: data.username,

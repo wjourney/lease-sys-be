@@ -80,3 +80,12 @@ test("legacy company disable flag does not block login, while member and service
   await assert.rejects(guard.canActivate(ctx));
   await assert.rejects(service.login({ username: user.username, password: "test-password" }, "test-ip-3"));
 });
+
+test("login throttling reports 429 rather than a permissions error", async () => {
+  const db: any = { user: { findUnique: async () => null } };
+  const service = new AuthService(db);
+  const username = randomUUID();
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(service.login({ username, password: "incorrect" }, "throttle-test"), (error: any) => error.getStatus() === 401);
+  await assert.rejects(service.login({ username, password: "incorrect" }, "throttle-test"), (error: any) => error.getStatus() === 429 && error.message === "尝试过多，请 15 分钟后重试");
+});
