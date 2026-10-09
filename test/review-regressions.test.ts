@@ -43,18 +43,23 @@ test("type address editing synchronizes live unit name while retaining historica
   assert.equal(unit.unitNo, "B座 15楼 01");
   assert.equal(unit.floor, "15");
 });
-test("deleted child units no longer prevent project deletion; live units still do", async () => {
-  const project = { id: randomUUID(), revision: 1 };
-  let live = false;
-  const db: any = { $queryRawUnsafe: async () => [], $transaction: async (fn: any) => fn(db),
-    unit: { count: async ({ where }: any) => { assert.equal(where.deletedAt, null); return live ? 1 : 0; } },
-    project: { updateMany: async () => ({ count: 1 }), findUnique: async () => project },
+test("project deletion blocks occupancy and cascades available units", async () => {
+  const project = { id: randomUUID(), name: "项目", revision: 1 };
+  const units = [{ id: randomUUID(), revision: 1, deletedAt: null as any }];
+  let occupied = true;
+  let projectDeleted = false;
+  const db: any = { $queryRawUnsafe: async () => [], $queryRaw: async () => occupied ? [{ id: randomUUID() }] : [], $transaction: async (fn: any) => fn(db),
+    unit: { findMany: async () => units.filter(u => !u.deletedAt), findUnique: async () => units[0], updateMany: async ({data}: any) => { Object.assign(units[0], data); return { count: 1 }; } },
+    project: { updateMany: async () => { projectDeleted = true; return { count: 1 }; }, findUnique: async () => project },
   };
   const service = new ProjectsService(db, { allow: () => {}, get: async () => project } as any, {} as any);
-  live = true;
-  await assert.rejects(service.remove(actor, project.id, "清理项目"), /请先删除项目下的单位/);
-  live = false;
+  await assert.rejects(service.remove(actor, project.id, "清理项目"), /有在租单位，不可删除项目/);
+  assert.equal(units[0].deletedAt, null);
+  assert.equal(projectDeleted, false);
+  occupied = false;
   await service.remove(actor, project.id, "清理项目");
+  assert.ok(units[0].deletedAt);
+  assert.equal(projectDeleted, true);
 });
 test("legacy company disable flag does not block login, while member and service restrictions remain", async () => {
   process.env.JWT_SECRET ??= "review-test-only-jwt-secret-at-least-32-characters";

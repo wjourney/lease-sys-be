@@ -2,7 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, internal } from "../../common/auth/actor";
-import { update } from "../../common/database/record-mutations";
+import { lock, update } from "../../common/database/record-mutations";
 import { ResourceService } from "../../common/resources/resource.service";
 import { fail } from "../../common/utils/errors";
 import { PrismaService } from "../../database/prisma.service";
@@ -16,7 +16,6 @@ export class ProjectsService extends ResourceService {
   readonly resource = "projects";
   protected schema = ProjectsSchema;
   protected prefix: [string, string] = ["code", "P"];
-  protected references: [string, string][] = [["unit", "projectId"]];
   constructor(
     @Inject(PrismaService)
     db: PrismaService,
@@ -26,6 +25,26 @@ export class ProjectsService extends ResourceService {
     private readonly storage: StorageService,
   ) {
     super(db, access);
+  }
+  protected async beforeRemove(a: Actor, tx: any, row: any) {
+    // The project lock prevents new units; unit locks serialize order creation.
+    const units = await tx.unit.findMany({
+      where: { projectId: row.id, deletedAt: null }, orderBy: { id: "asc" },
+    });
+    for (const unit of units) await lock(tx, "units", unit.id);
+    // Use a current locking read: a lease may have committed while waiting for a unit lock.
+    const occupied = await tx.$queryRaw`
+      SELECT id FROM orders WHERE projectId = ${row.id} AND deletedAt IS NULL
+        AND status <> 'CLOSED' AND occupancyState <> 'RELEASED' LIMIT 1 FOR UPDATE
+    `;
+    if (occupied.length) fail("有在租单位，不可删除项目");
+    const deletedAt = new Date();
+    for (const unit of units) {
+      const current = await tx.unit.findUnique({ where: { id: unit.id } });
+      if (!current.deletedAt)
+        await update(tx, "units", current, { deletedAt, deletedBy: a.id }, a,
+          `随项目删除：${row.name}；${row.id}`);
+    }
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
     if (!row && !data.typeConfigs?.length) fail("请至少配置一种项目单位类型");
@@ -153,9 +172,9 @@ export class ProjectsService extends ResourceService {
       },
     });
     x.unitCount = units.length;
-    x.canDelete = units.length === 0;
-    x.deleteReason = units.length ? "请先删除项目下的单位" : null;
     x.occupiedCount = new Set(occupied.map((o) => o.unitId)).size;
+    x.canDelete = x.occupiedCount === 0;
+    x.deleteReason = x.occupiedCount ? "有在租单位，不可删除项目" : null;
     x.lockedCount = 0;
     x.availableCount =
       units.length - new Set(occupied.map((o) => o.unitId)).size;

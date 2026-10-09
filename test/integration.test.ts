@@ -741,6 +741,28 @@ test("full workflow and authorization invariants", async (t) => {
       );
     },
   );
+  await t.test("project deletion cascades available units but refuses rented units", async () => {
+    const p = await admin.call("POST", "/projects", {
+      name: "级联删除回归", propertyName: "回归物业", region: "港岛", address: "回归地址", typeConfigs: [{
+        code: "L", name: "单间", building: "A座", floor: "1", area: "30", layout: "开放式", referenceRent: "150", minRent: "100", maxRent: "200",
+      }],
+    }, 201);
+    const u = await admin.call("POST", "/units", { projectId: p.id, unitTypeCode: "L", roomNo: "01", minLeaseMonths: 1 }, 201);
+    const second = await admin.call("POST", "/units", { projectId: p.id, unitTypeCode: "L", roomNo: "02", minLeaseMonths: 1 }, 201);
+    assert.equal((await admin.call("GET", "/projects/" + p.id)).canDelete, true);
+    const lease = await admin.call("POST", "/orders", { projectId: p.id, unitId: u.id, tenantName: "删除回归租客", monthlyRent: "150", startsOn: "2028-01-01", endsOn: "2028-01-31" }, 201);
+    const blocked = await admin.call("GET", "/projects/" + p.id);
+    assert.equal(blocked.canDelete, false);
+    assert.equal(blocked.deleteReason, "有在租单位，不可删除项目");
+    await admin.call("DELETE", "/projects/" + p.id, { reason: "回归测试" }, 400);
+    await admin.call("GET", "/units/" + second.id);
+    await admin.call("POST", "/orders/" + lease.id + "/close", { reason: "取消租约" }, 201);
+    assert.equal((await admin.call("GET", "/projects/" + p.id)).canDelete, true);
+    await admin.call("DELETE", "/projects/" + p.id, { reason: "回归测试" });
+    await admin.call("GET", "/projects/" + p.id, undefined, 404);
+    for (const unit of [u, second]) await admin.call("GET", "/units/" + unit.id, undefined, 404);
+    assert.equal((await admin.call("GET", "/orders/" + lease.id)).status, "CLOSED");
+  });
   await t.test(
     "optimistic changes append inline history and soft deletion retains it",
     async () => {
