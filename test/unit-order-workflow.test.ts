@@ -19,6 +19,31 @@ test('partial final rental month prorates once and respects opt-out', () => {
   assert.equal(rentPeriod(o,date('2026-02-15')).amount.toFixed(2),'7500.00');
   assert.equal(rentPeriod({...o,lastPeriodProration:false},date('2026-02-15')).amount.toFixed(2),'15000.00');
 });
+for (const [start, end, amount] of [
+  ['2026-10-09', '2026-10-20', '1200.00'],
+  ['2026-10-09', '2026-10-09', '100.00'],
+  ['2026-10-09', '2026-11-08', '3100.00'],
+  ['2026-01-25', '2026-02-10', '1700.00'],
+  ['2024-02-01', '2024-02-14', '1496.55'],
+]) test(`daily rent includes both dates from ${start} to ${end}`, () => {
+  const o = {...lease(start), endsOn: date(end), monthlyRent: '3100'};
+  assert.equal(rentPeriod(o, o.startsOn).amount.toFixed(2), amount);
+  assert.equal(rentPeriod({...o, firstPeriodProration: undefined, lastPeriodProration: undefined}, o.startsOn).amount.toFixed(2), amount);
+});
+test('short-term generation creates exactly one daily bill and is idempotent', async () => {
+  const rows: any[] = [];
+  const tx: any = {income: {
+    findUnique: async ({where}: any) => rows.find(r => r.sourceKey === where.sourceKey),
+    create: async ({data}: any) => {const r = {id: String(rows.length), ...data}; rows.push(r); return r;},
+  }};
+  const service = new RentBillingService(tx, {} as any);
+  const o = {...lease('2026-10-09'), endsOn: date('2026-10-20'), monthlyRent: '3100'};
+  await service.fullTerm(tx, o, actor);
+  await service.fullTerm(tx, o, actor);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].amount.toFixed(2), '1200.00');
+  assert.equal(rows[0].periodEnd.toISOString().slice(0, 10), '2026-10-20');
+});
 test('full-term generation is idempotent and migration preserves void/deleted billing periods', async () => {
   const rows:any[]=[];
   const tx:any={ income:{ findUnique:async({where}:any)=>rows.find(r=>r.sourceKey===where.sourceKey),findMany:async()=>rows, create:async({data}:any)=>{const r={id:String(rows.length),...data};rows.push(r);return r;} } };

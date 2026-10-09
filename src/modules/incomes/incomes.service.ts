@@ -1,3 +1,4 @@
+import { loadBillTitles } from "./bill-title";
 import { billInvoiceCounts } from "../invoices/bill-invoice-counts";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
@@ -65,6 +66,7 @@ export class IncomesService extends ResourceService {
   async detail(a: Actor, key: string) {
     const result = await super.detail(a, key);
     if (result.recordType === "RECEIVABLE") {
+      const titleFor = await loadBillTitles(this.db, [result]);
       const children = await this.db.income.findMany({
         where: { parentId: key, recordType: "RECEIPT", deletedAt: null },
         orderBy: { createdAt: "desc" },
@@ -106,6 +108,7 @@ export class IncomesService extends ResourceService {
       );
       return {
         ...result,
+        ...titleFor(result),
         receipts,
         offsets,
         operations,

@@ -19,7 +19,7 @@ export function rentPeriod(order: any, start: Date) {
     const next = plusMonths(order.startsOn, index + 1);
     const end = new Date(Math.min(next.getTime() - 86400000, order.endsOn.getTime()));
     const partial = start > periodStart || end.getTime() + 86400000 < next.getTime();
-    const prorate = (!order.firstPeriodProration && start.getTime() === order.startsOn.getTime()) || (!order.lastPeriodProration && end.getTime() === order.endsOn.getTime()) ? false : true;
+    const prorate = (order.firstPeriodProration === false && start.getTime() === order.startsOn.getTime()) || (order.lastPeriodProration === false && end.getTime() === order.endsOn.getTime()) ? false : true;
     const ratio = partial && prorate ? number(end.getTime() - start.getTime() + 86400000).div(next.getTime() - periodStart.getTime()) : number(1);
     return { end, amount: number(order.monthlyRent).mul(ratio).toDecimalPlaces(2) };
   }
@@ -43,8 +43,8 @@ export function rentPeriod(order: any, start: Date) {
     const isFirst = cursor.getTime() === order.startsOn.getTime();
     const isLast = end.getTime() === order.endsOn.getTime();
     const prorate =
-      (!isFirst || order.firstPeriodProration) &&
-      (!isLast || order.lastPeriodProration);
+      (!isFirst || order.firstPeriodProration !== false) &&
+      (!isLast || order.lastPeriodProration !== false);
     amount = amount.add(
       number(order.monthlyRent).mul(
         partial && prorate ? number(days).div(full) : 1,

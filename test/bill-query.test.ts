@@ -121,7 +121,7 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
     income: {
       findMany: async (args: any) => {
         if (args.where.recordType === "RECEIPT") return [];
-        where = args.where;
+        if (args.where.AND) where = args.where;
         return roots;
       },
       groupBy: async () => [

@@ -1,4 +1,5 @@
 import { orderInProgress } from "../../common/utils/order-status";
+import { billTitles } from "../incomes/bill-title";
 import { billAmounts } from "../incomes/bill-query";
 import { orderSettlement } from "./order-settlement";
 import { Inject, Injectable } from "@nestjs/common";
@@ -96,6 +97,7 @@ export class OrderDetailService {
     ]);
     const sum = (rows: any[], key: string) =>
       rows.reduce((n, x) => n.add(x[key] ?? 0), number(0));
+    const titleFor = billTitles(roots);
     const bills = roots.map((root) => {
       const children = receipts.filter((x) => x.parentId === root.id);
       const confirmed = sum(
@@ -110,6 +112,7 @@ export class OrderDetailService {
         offset = number(root.depositOffsetAmount);
       return {
         ...plain(root),
+        ...titleFor(root),
         ...billAmounts(root, { confirmed, pending }),
         operationLogs: undefined,
         receipts: children.map(({ operationLogs, ...r }) => ({

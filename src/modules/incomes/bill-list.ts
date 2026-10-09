@@ -1,3 +1,4 @@
+import { loadBillTitles } from "./bill-title";
 import { billInvoiceCounts } from "../invoices/bill-invoice-counts";
 import { Actor } from "../../common/auth/actor";
 import {
@@ -165,6 +166,7 @@ export async function listOrderBills(
         (q.page - 1) * q.pageSize,
         q.page * q.pageSize,
       );
+      const titleFor = await loadBillTitles(tx, pageRows);
       const invoiceCounts = await billInvoiceCounts(
         tx,
         pageRows.filter((b: any) => b.status !== "VOID").map((b: any) => b.id),
@@ -173,6 +175,7 @@ export async function listOrderBills(
         const order = orderMap.get(b.orderId);
         return {
           ...b,
+          ...titleFor(b),
           orderNo: order.orderNo,
           projectName: projectMap.get(b.projectId),
           unitNo: unitMap.get(b.unitId),

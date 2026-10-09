@@ -91,6 +91,8 @@ test("full workflow and authorization invariants", async (t) => {
     assert.notEqual(second.items[0].id, first.items[0].id);
     assert.equal((await other.call("GET", q)).total, 0);
     const detail = await sales.call("GET", `/incomes/${first.items[0].id}`);
+    assert.equal(detail.billTitle, first.items[0].billTitle);
+    assert.ok(detail.billTitle);
     assert.ok(Array.isArray(detail.receipts));
     assert.ok(Array.isArray(detail.offsets));
     assert.ok(Array.isArray(detail.operations));
@@ -1895,6 +1897,11 @@ test("renewal API extends the same order, appends bills once and releases the un
   assert.deepEqual(renewed.bills.filter((b: any) => ids.has(b.id)).map((b: any) => ({ id: b.id, amount: b.amount, status: b.status, periodStart: b.periodStart, periodEnd: b.periodEnd })), history);
   const added = renewed.bills.filter((b: any) => !ids.has(b.id));
   assert.equal(added.length, 12);
+  assert.equal(added[0].rentInstallment, 13);
+  assert.equal(added[0].billTitle, "十三期租金—2027-10-01 至 2027-10-31");
+  const rentalPage = await admin.call("GET", `/incomes/bills?orderId=${original.id}&feeType=RENT&page=2&pageSize=12`);
+  assert.equal(rentalPage.items[0].rentInstallment, 13);
+  assert.equal(rentalPage.items[0].billTitle, added[0].billTitle);
   assert.equal(added[0].periodStart.slice(0, 10), "2027-10-01");
   assert.equal(added[11].periodEnd.slice(0, 10), "2028-09-30");
   assert.notEqual(renewed.currentContractMaterialId, original.currentContractMaterialId);
