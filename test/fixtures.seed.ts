@@ -213,6 +213,7 @@ async function main() {
   );
   for (let n = 0; n < 3; n++) {
     const o = await b.createOrder(a, {
+      projectId: projects[0].id,
       unitId: units[n].id,
       salesUserId: n === 2 ? other.id : sales.id,
       tenantType: n === 1 ? "COMPANY" : "PERSON",
