@@ -65,19 +65,22 @@ export abstract class ResourceQueryService {
           [k]: { contains: String(q.q).slice(0, 100) },
         })),
       });
-    if (
+    if (q.status && r === "orders") {
+      const groupedStatuses: Record<string, string[]> = {
+        IN_PROGRESS: ["DRAFT", "PENDING", "ACTIVE"],
+        ENDED: ["COMPLETED", "CLOSED"],
+      };
+      and.push(
+        groupedStatuses[q.status]
+          ? { status: { in: groupedStatuses[q.status] } }
+          : { status: q.status },
+      );
+    } else if (
       q.status &&
-      [
-        "users",
-        "projects",
-        "orders",
-        "incomes",
-        "expenses",
-        "invoices",
-        "materials",
-      ].includes(r)
-    )
+      ["users", "projects", "incomes", "expenses", "invoices", "materials"].includes(r)
+    ) {
       and.push({ status: q.status });
+    }
     if (
       r === "units" &&
       ["AVAILABLE", "LOCKED", "OCCUPIED"].includes(q.status)

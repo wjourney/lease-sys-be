@@ -790,6 +790,13 @@ test("full workflow and authorization invariants", async (t) => {
     async () => {
       const pending = (await admin.call("GET", "/orders?status=PENDING"))
         .items[0];
+      const inProgress = await admin.call("GET", "/orders?status=IN_PROGRESS&pageSize=100");
+      assert(inProgress.items.some((order: any) => order.id === pending.id));
+      assert(
+        inProgress.items.every((order: any) =>
+          ["DRAFT", "PENDING", "ACTIVE"].includes(order.status),
+        ),
+      );
       await admin.call(
         "POST",
         "/orders",
@@ -1584,6 +1591,10 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       );
       await end(o.id, "2026-11-15");
       o = await detail(o.id);
+      const ended = await admin.call("GET", "/orders?status=ENDED&pageSize=100");
+      assert(ended.items.some((order: any) => order.id === o.id));
+      const stillInProgress = await admin.call("GET", "/orders?status=IN_PROGRESS&pageSize=100");
+      assert(!stillInProgress.items.some((order: any) => order.id === o.id));
       assert.equal(o.deposit.state, "SETTLEMENT_PENDING");
       assert.equal(o.rentRefunds.length, 1);
       assert.equal(Number(o.rentRefunds[0].amount), 550);
