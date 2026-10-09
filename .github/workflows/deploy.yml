@@ -61,7 +61,7 @@ jobs:
           tar -C "$release_dir" -cf - source.bundle image.tar | gzip -6 > "$release_dir/release.tar.gz"
           du -h "$release_dir/release.tar.gz"
       - name: Upload release archive
-        timeout-minutes: 20
+        timeout-minutes: 60
         env:
           DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
