@@ -35,13 +35,6 @@ export class ProjectsController {
       await this.service.create(r.actor, body),
     );
   }
-  @Patch(":id/logos/order") orderLogos(
-    @Req() r: any,
-    @Param("id") id: string,
-    @Body() body: any,
-  ) {
-    return this.service.orderLogos(r.actor, id, body);
-  }
   @Patch(":id/images/order") orderImages(
     @Req() r: any,
     @Param("id") id: string,

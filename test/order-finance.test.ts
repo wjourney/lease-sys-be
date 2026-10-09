@@ -298,7 +298,7 @@ function fixture() {
     unitId: randomUUID(),
     projectId: randomUUID(),
     revision: 1,
-    status: "PENDING",
+    status: "ACTIVE",
     occupancyState: "LOCKED",
     startsOn: new Date("2026-10-01"),
     endsOn: new Date("2027-09-30"),
@@ -438,13 +438,13 @@ test("partial receipt directly posts money and keeps the bill OPEN", async () =>
     "100",
   );
 });
-test("first rent alone stays pending; the deposit receipt activates order; retry never duplicates invoice", async () => {
+test("partial and full receipts preserve an active order; retry never duplicates invoice", async () => {
   const f = fixture();
   await f.receipts.receipt(operations, f.tables.income[0].id, {
     ...f.payment,
     amount: "100",
   });
-  assert.equal(f.tables.order[0].status, "PENDING");
+  assert.equal(f.tables.order[0].status, "ACTIVE");
   const payment = { ...f.payment, sourceKey: randomUUID(), amount: "200" };
   await f.receipts.receipt(operations, f.tables.income[1].id, payment);
   await f.receipts.receipt(operations, f.tables.income[1].id, payment);
@@ -502,7 +502,7 @@ test("reversal preserves receipt and voids invoice; does not release occupied un
     "VOID",
   );
   assert.equal(f.tables.order[0].occupancyState, "OCCUPIED");
-  assert.equal(f.tables.order[0].status, "PENDING");
+  assert.equal(f.tables.order[0].status, "ACTIVE");
 });
 test("settlement or downstream payment blocks reversal", async () => {
   const f = fixture();
@@ -581,18 +581,23 @@ test("lease ended and handed over is not complete until refunds and commission a
     false,
   );
 });
-test("unactivated order never generates subsequent rent bills", async () => {
+for (const status of ["PENDING", "ACTIVE"]) test(`unpaid ${status} order expires without waiting for receipts`, async () => {
   const f = fixture();
-  f.tables.order[0].nextBillOn = new Date("2026-11-01");
-  const jobs = new JobsService(f.db, f.access, {
-    bill: () => {
-      throw new Error("must not generate");
-    },
-  } as any);
-  assert.equal(
-    (await jobs.generateDue(admin, new Date("2026-12-01"))).generated,
-    0,
-  );
+  Object.assign(f.tables.order[0], { status, endsOn: new Date("2026-10-02"), nextBillOn: null });
+  const jobs = new JobsService(f.db, f.access, {} as any);
+  await jobs.generateDue(admin, new Date("2026-10-05"));
+  assert.equal(f.tables.order[0].status, "COMPLETED");
+});
+for (const status of ["PENDING", "ACTIVE"]) test(`partial payment does not block ${status} order termination`, async () => {
+  const f = fixture();
+  f.tables.order[0].status = status;
+  const bill = f.tables.income[0];
+  await f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" });
+  assert.equal(f.tables.order[0].status, status);
+  await assert.rejects(f.lifecycle.close(admin, f.order.id), /已有收款/);
+  const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-10-10", reason: "租客提前退租" });
+  assert.equal(ended.status, "COMPLETED");
+  assert.equal((await f.balances.totals(f.db, bill.id)).confirmed.toString(), "60");
 });
 
 test("new orders require a project and unit without creating financial artifacts", async () => {
@@ -644,7 +649,7 @@ test("completing a legacy draft generates monthly bills exactly once", async () 
     tenantName: draft.tenantName,
     unitId: unit.id,
   });
-  assert.equal(order.status, "PENDING");
+  assert.equal(order.status, "ACTIVE");
   assert.equal(String(order.monthlyRent), "300");
   assert.equal(String(order.depositAmount), "300.00");
   assert.equal(order.endsOn.toISOString().slice(0, 10), "2027-10-06");
@@ -732,4 +737,16 @@ test("new order normalizes commission to monthly installments with a per-month a
   assert(rows.every(c => c.mode === "RECURRING_MONTHLY" && Number(c.amount) === 50));
   assert.equal(rows[11].dueOn.toISOString().slice(0, 10), "2027-09-10");
   assert.equal(created.commissionDraft.mode, "RECURRING_MONTHLY");
+});
+
+test("cancelling a partially paid lease before its start issues a rent refund without erasing the receipt", async () => {
+  const f = fixture();
+  const bill = f.tables.income[0];
+  Object.assign(bill, { periodStart: new Date("2026-10-01"), periodEnd: new Date("2026-10-31") });
+  await f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" });
+  const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-09-28", reason: "起租前取消" });
+  assert.equal(ended.status, "COMPLETED");
+  assert.equal(f.tables.expense[0].feeType, "RENT_REFUND");
+  assert.equal(f.tables.expense[0].amount.toString(), "60");
+  assert.equal((await f.balances.totals(f.db, bill.id)).confirmed.toString(), "60");
 });

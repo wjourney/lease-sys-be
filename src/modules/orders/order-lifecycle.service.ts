@@ -1,3 +1,4 @@
+import { orderInProgress } from "../../common/utils/order-status";
 import { ReceiptsService } from "../incomes/receipts.service";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
@@ -359,7 +360,7 @@ export class OrderLifecycleService {
           initialPayment: plain(payment),
           commissionDraft: plain(commission ?? {}),
           billingVersion: 2,
-          status: ready ? "PENDING" : "DRAFT",
+          status: ready ? "ACTIVE" : "DRAFT",
           occupancyState: ready ? "OCCUPIED" : "RELEASED",
           nextBillOn: null,
           tenantSnapshot: plain({
@@ -437,7 +438,7 @@ export class OrderLifecycleService {
         OR: [
           { startsOn: { lte: end }, endsOn: { gte: start } },
           {
-            status: { in: ["ACTIVE", "COMPLETED"] },
+            status: { in: ["PENDING", "ACTIVE", "COMPLETED"] },
             endsOn: {
               lt: new Date(
                 Math.min(
@@ -528,7 +529,7 @@ export class OrderLifecycleService {
             status: { in: ["PENDING", "CONFIRMED"] },
           },
         }));
-        if (o.status !== "PENDING" || hasReceipts) {
+        if (!orderInProgress(o.status) || hasReceipts) {
           const allowed = new Set([
             "tenantPhone",
             "tenantEmail",
@@ -754,9 +755,9 @@ export class OrderLifecycleService {
     return this.db.$transaction(async (tx) => {
       await lock(tx, "orders", key);
       const o = await this.access.get(a, "orders", key, tx);
-      if (o.status !== "ACTIVE") fail("仅生效中的订单可退租");
-      if (d.date < o.startsOn || d.date > o.endsOn)
-        fail("退租日期必须在租期内");
+      if (!orderInProgress(o.status)) fail("仅进行中的订单可退租");
+      if (d.date > o.endsOn) fail("退租日期不能晚于租期结束日期");
+      if (d.date < o.startsOn && o.moveInOn) fail("已登记入住的订单不能按起租前取消处理");
       // Recalculate only generated rent periods. Confirmed receipts are immutable.
       const bills = await tx.income.findMany({
         where: {
@@ -892,7 +893,7 @@ export class OrderLifecycleService {
       await lock(tx, "units", first.unitId);
       await lock(tx, "orders", key);
       const o = await this.access.get(a, "orders", key, tx);
-      if (o.status !== "ACTIVE") fail("首期款项确认收齐后才能办理入住");
+      if (!orderInProgress(o.status)) fail("仅进行中的订单可办理入住");
       if (d.date > new Date() || d.date < o.startsOn || d.date > o.endsOn)
         fail("入住日期应在租期内，且不能晚于今天");
       return update(
@@ -1024,7 +1025,7 @@ export class OrderLifecycleService {
       await lock(tx, "units", o.unitId);
       await lock(tx, "orders", key);
       const fresh = await this.access.get(a, "orders", key, tx);
-      if (fresh.status !== "PENDING") fail("仅未登记收款的待确认订单可关闭");
+      if (!orderInProgress(fresh.status)) fail("仅未登记收款的进行中订单可关闭");
       const roots = await tx.income.findMany({
         where: { orderId: key, recordType: "RECEIVABLE" },
       });

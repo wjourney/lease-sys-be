@@ -788,7 +788,7 @@ test("full workflow and authorization invariants", async (t) => {
   await t.test(
     "overlapping orders and repeated periodic generation are rejected",
     async () => {
-      const pending = (await admin.call("GET", "/orders?status=PENDING"))
+      const pending = (await admin.call("GET", "/orders?status=IN_PROGRESS"))
         .items[0];
       const inProgress = await admin.call("GET", "/orders?status=IN_PROGRESS&pageSize=100");
       assert(inProgress.items.some((order: any) => order.id === pending.id));
@@ -821,7 +821,7 @@ test("full workflow and authorization invariants", async (t) => {
     },
   );
   await t.test(
-    "project code stays fixed and logo editing honors the four-image limit",
+    "project code stays fixed and images share one cover-order operation",
     async () => {
       const project = await admin.call(
         "POST",
@@ -880,9 +880,9 @@ test("full workflow and authorization invariants", async (t) => {
       const logos = [];
       for (let index = 0; index < 4; index++)
         logos.push(await uploadLogo(index));
-      await uploadLogo(4, 400);
+      logos.push(await uploadLogo(4));
       const ids = logos.map((logo) => logo.id).reverse();
-      await admin.call("PATCH", `/projects/${project.id}/logos/order`, { ids });
+      await admin.call("PATCH", `/projects/${project.id}/images/order`, { ids });
       const materials = await admin.call(
         "GET",
         `/materials?projectId=${project.id}&category=LOGO`,
@@ -892,7 +892,7 @@ test("full workflow and authorization invariants", async (t) => {
         0,
       );
       const detail = await admin.call("GET", `/projects/${project.id}`);
-      assert.equal(detail.materials.length, 4);
+      assert.equal(detail.materials.length, 5);
       assert.equal(detail.materials[0].id, ids[0]);
       assert.equal(
         detail.materials[0].downloadUrl,
@@ -1014,14 +1014,8 @@ test("full workflow and authorization invariants", async (t) => {
       projectId: existing.projectId,
       roomNo: `价格校验-${randomUUID().slice(0, 8)}`,
       unitTypeCode: existing.unitTypeCode,
-      area: "38",
-      referenceRent: "899",
-      minRent: "12122",
-      maxRent: "33434",
       minLeaseMonths: 12,
       extra: {
-        phase: "A座",
-        currentState: "可租",
         usage: "住宅",
         rentCycle: "月付",
       },
@@ -1045,11 +1039,7 @@ test("full workflow and authorization invariants", async (t) => {
         projectId: existing.projectId,
         roomNo: `新订单-${randomUUID().slice(0, 8)}`,
         unitTypeCode: existing.unitTypeCode,
-        area: "38",
-        referenceRent: "5800",
-        minRent: "5000",
-        maxRent: "6500",
-        minLeaseMonths: 12,
+          minLeaseMonths: 12,
       },
       201,
     );
@@ -1138,7 +1128,7 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.orderCommission.periodEnd.slice(0, 10), "2026-11-30");
     assert.equal(detail.orderCommission.dueOn.slice(0, 10), "2026-11-05");
     assert.equal(detail.commissions.length, 12);
-    assert.equal(detail.status, "PENDING");
+    assert.equal(detail.status, "ACTIVE");
     const edited = await admin.call("PATCH", `/orders/${created.id}`, {
       revision: detail.revision,
       reason: "核对租客资料",
@@ -1199,11 +1189,7 @@ test("full workflow and authorization invariants", async (t) => {
         projectId: template.projectId,
         roomNo: `月结佣金-${randomUUID().slice(0, 8)}`,
         unitTypeCode: template.unitTypeCode,
-        area: "38",
-        referenceRent: "5800",
-        minRent: "5000",
-        maxRent: "6500",
-        minLeaseMonths: 1,
+          minLeaseMonths: 1,
       },
       201,
     );
@@ -1465,11 +1451,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
         projectId: template.projectId,
         roomNo: `押金流程-${randomUUID().slice(0, 8)}`,
         unitTypeCode: template.unitTypeCode,
-        area: "38",
-        referenceRent: "1000",
-        minRent: "900",
-        maxRent: "1500",
-        minLeaseMonths: 1,
+          minLeaseMonths: 1,
       },
       201,
     );
@@ -1786,7 +1768,7 @@ test("batch unit creation is atomic, concurrent-safe, idempotent and permission 
     name: `批量单位-${suffix}`, region: "港岛", address: "批量测试地址",
     typeConfigs: [{ code: "BATCH", name: "大单位", building: "A座", floor: "3", area: "40", layout: "两房", age: 2, minRent: "100", maxRent: "200", referenceRent: "150" }],
   }, 201);
-  const body = { requestId: randomUUID(), projectId: project.id, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "BATCH", referenceRent: "150" })) };
+  const body = { requestId: randomUUID(), projectId: project.id, rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "BATCH" })) };
   for (const client of [sales, company, finance]) await client.call("POST", "/units/batch", body, 403);
   await admin.call("POST", "/units/batch", { ...body, rows: [] }, 400);
   const invalid = await admin.call("POST", "/units/batch", { ...body, rows: [body.rows[0], { ...body.rows[1], roomNo: "01" }] }, 201);
@@ -1812,7 +1794,7 @@ test("batch unit creation is atomic, concurrent-safe, idempotent and permission 
   await admin.call("DELETE", `/units/${one.unitIds[0]}`, { reason: "测试历史单位引用" });
   const afterDelete = await admin.call("GET", `/projects/${project.id}`);
   assert.equal(afterDelete.unitCount, 2);
-  assert.equal(afterDelete.unitTypeUsage.BATCH, 3);
+  assert.equal(afterDelete.unitTypeUsage.BATCH, 2);
   const changedType = { ...afterDelete.typeConfigs[0], referenceRent: "160" };
   await admin.call("PATCH", `/projects/${project.id}`, { typeConfigs: [changedType], revision: afterDelete.revision });
   const synced = await admin.call("GET", `/units/${one.unitIds[1]}`);

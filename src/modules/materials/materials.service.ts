@@ -89,25 +89,4 @@ export class MaterialsService extends ResourceService {
       );
     });
   }
-  protected async beforeCreate(
-    _a: Actor,
-    data: any,
-    tx: any,
-    options?: { replacingMaterialGroupId?: string },
-  ) {
-    if (data.category !== "LOGO" || !data.projectId) return;
-    await tx.$queryRaw`SELECT id FROM projects WHERE id = ${data.projectId} FOR UPDATE`;
-    const count = await tx.material.count({
-      where: {
-        projectId: data.projectId,
-        category: "LOGO",
-        deletedAt: null,
-        isCurrent: true,
-        ...(options?.replacingMaterialGroupId
-          ? { materialGroupId: { not: options.replacingMaterialGroupId } }
-          : {}),
-      },
-    });
-    if (count >= 4) fail("每个项目最多上传 4 张 Logo");
-  }
 }

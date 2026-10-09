@@ -10,7 +10,7 @@ import { UnitsSchema } from "./dto/units.schema";
 import { normalizeUploadName } from "../materials/file-name";
 import { StorageService } from "../../common/storage/storage.service";
 import { projectUnitTypes } from "../projects/project-unit-types";
-import { unitTypeValues } from "../projects/unit-type-values";
+import { unitTypeValues, unitNumber } from "../projects/unit-type-values";
 import { insert, lock } from "../../common/database/record-mutations";
 @Injectable()
 export class UnitsService extends ResourceService {
@@ -43,7 +43,7 @@ export class UnitsService extends ResourceService {
     Object.assign(data, unitTypeValues(type, { ...row?.extra, ...data.extra }));
     if (!d.roomNo?.trim()) fail("请填写房号");
     data.roomNo = d.roomNo.trim();
-    data.unitNo = `${type.building} ${/楼$/.test(type.floor) ? type.floor : `${type.floor}楼`} ${data.roomNo}`;
+    data.unitNo = unitNumber(type, data.roomNo);
     const duplicate = await tx.unit.findFirst({ where: { projectId: d.projectId, OR: [{ building: type.building, floor: type.floor, roomNo: data.roomNo }, { unitNo: data.unitNo }], ...(row ? { id: { not: row.id } } : {}) } });
     if (duplicate) fail(duplicate.deletedAt ? "此房号已被历史单位使用，请使用其他房号" : "该期/座、楼层下已存在此房号");
     if (row && data.projectId && data.projectId !== row.projectId)
@@ -106,16 +106,35 @@ export class UnitsService extends ResourceService {
       return { ok: true, count: unitIds.length, unitIds };
     }, { maxWait: 10000, timeout: 60000 });
   }
-  async enrich(a: Actor, row: any) {
-    const x = await super.enrich(a, row);
-    const project = await this.db.project.findUnique({
+  protected async enrichMany(a: Actor, rows: any[]) {
+    if (!rows.length) return [];
+    const ids = rows.map((row) => row.id);
+    const projectIds = [...new Set(rows.map((row) => row.projectId))];
+    const [projects, units, orders, images, dictionary] = await Promise.all([
+      this.db.project.findMany({ where: { id: { in: projectIds } } }),
+      this.db.unit.findMany({ where: { projectId: { in: projectIds } } }),
+      this.db.order.findMany({ where: { unitId: { in: ids }, deletedAt: null }, orderBy: { startsOn: "asc" } }),
+      this.db.material.findMany({ where: { unitId: { in: ids }, category: "PHOTO", storageKey: { not: null }, deletedAt: null, isCurrent: true, ...(!internal(a) ? { visibility: "SHARED" as const } : {}) }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+      this.db.systemSetting.findUnique({ where: { key: "unit_types" } }),
+    ]);
+    const types = new Map(await Promise.all(projects.map(async (project) => [project.id, await projectUnitTypes(this.db, project, units.filter((unit) => unit.projectId === project.id), dictionary)] as const)));
+    const byProject = new Map(projects.map((project) => [project.id, project]));
+    return Promise.all(rows.map((row) => this.enrich(a, row, {
+      project: byProject.get(row.projectId), types: types.get(row.projectId) ?? [],
+      orders: orders.filter((order) => order.unitId === row.id),
+      images: images.filter((image) => image.unitId === row.id),
+    })));
+  }
+  async enrich(a: Actor, row: any, context?: any) {
+    const project = context?.project ?? await this.db.project.findUnique({
       where: { id: row.projectId },
     });
-    const types = project ? await projectUnitTypes(this.db, project) : [];
+    const x = await super.enrich(a, row, context ?? { project });
+    const types = context?.types ?? (project ? await projectUnitTypes(this.db, project) : []);
     x.unitTypeName =
       types.find((item) => item.code === row.unitTypeCode)?.name ??
       row.unitTypeCode;
-    const o = await this.db.order.findFirst({
+    const o = context ? context.orders.find((order: any) => order.status !== "CLOSED" && order.occupancyState !== "RELEASED") : await this.db.order.findFirst({
       where: {
         unitId: row.id,
         deletedAt: null,
@@ -131,7 +150,10 @@ export class UnitsService extends ResourceService {
       },
     });
     x.occupancyStatus = o ? "OCCUPIED" : "AVAILABLE";
-    const firstPhoto = await this.db.material.findFirst({
+    const referenced = context ? context.orders.length > 0 : !!(await this.db.order.count({ where: { unitId: row.id, deletedAt: null } }));
+    x.canDelete = !o && !referenced;
+    x.deleteReason = o ? "已租单位不能删除" : referenced ? "该单位有历史订单记录，不能删除" : null;
+    const firstPhoto = context ? context.images[0] : await this.db.material.findFirst({
       where: {
         unitId: row.id,
         category: "PHOTO",

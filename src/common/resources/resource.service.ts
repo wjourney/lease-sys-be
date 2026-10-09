@@ -70,8 +70,8 @@ export abstract class ResourceService extends ResourceQueryService {
       const row = await this.access.get(a, this.resource, key, tx);
       await this.beforeRemove(a, tx, row);
       for (const [model, field] of this.references)
-        if (await (tx as any)[model].count({ where: { [field]: key } }))
-          fail("已有业务引用，请改为停用");
+        if (await (tx as any)[model].count({ where: { [field]: key, deletedAt: null } }))
+          fail(this.resource === "projects" ? "请先删除项目下的单位" : this.resource === "units" ? "该单位有历史订单记录，不能删除" : "已有业务引用，不能删除");
       return update(
         tx,
         this.resource,

@@ -5,6 +5,9 @@ export function validateUnitType(type: any) {
     fail("请完善单位类型的名称、期/座、楼层、面积、间隔、价格范围和月租价格");
   if (number(type.area).lte(0) || number(type.minRent).lt(0) || number(type.minRent).gt(type.maxRent) || number(type.referenceRent).lt(type.minRent) || number(type.referenceRent).gt(type.maxRent)) fail("请检查单位类型的面积、价格范围和月租价格");
 }
+export function unitNumber(type: any, roomNo: string) {
+  return `${type.building} ${/楼$/.test(type.floor) ? type.floor : `${type.floor}楼`} ${roomNo.trim()}`;
+}
 export function unitTypeValues(type: any, extra: any = {}) {
   validateUnitType(type);
   const { currentState, age, ...rest } = extra ?? {};

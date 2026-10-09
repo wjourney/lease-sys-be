@@ -1,3 +1,4 @@
+import { orderInProgress, inProgressOrderStatuses } from "../../common/utils/order-status";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor, financial } from "../../common/auth/actor";
@@ -21,7 +22,7 @@ export class JobsService {
     demand(financial(a));
     const expired = await this.db.order.findMany({
       where: {
-        status: "ACTIVE",
+        status: { in: inProgressOrderStatuses },
         deletedAt: null,
         endsOn: {
           lt: new Date(now.getTime() - 86400000),
@@ -38,7 +39,7 @@ export class JobsService {
         });
         // Catch up every due period before stopping the schedule at expiry.
         while (
-          current?.status === "ACTIVE" && !current.deletedAt &&
+          current && orderInProgress(current.status) && !current.deletedAt &&
           current.nextBillOn &&
           current.nextBillOn <= current.endsOn
         ) {
@@ -52,7 +53,7 @@ export class JobsService {
             "租期结束补齐账单",
           );
         }
-        if (current?.status === "ACTIVE" && !current.deletedAt)
+        if (current && orderInProgress(current.status) && !current.deletedAt)
           await update(
             tx,
             "orders",
@@ -69,7 +70,7 @@ export class JobsService {
     const orders = await this.db.order.findMany({
       where: {
         status: {
-          in: ["ACTIVE"],
+          in: inProgressOrderStatuses,
         },
         deletedAt: null,
         nextBillOn: {
@@ -88,7 +89,7 @@ export class JobsService {
             },
           });
           while (
-            o?.status === "ACTIVE" && !o.deletedAt &&
+            o && orderInProgress(o.status) && !o.deletedAt &&
             o.nextBillOn &&
             o.nextBillOn <= o.endsOn &&
             o.nextBillOn.getTime() - o.billLeadDays * 86400000 <=

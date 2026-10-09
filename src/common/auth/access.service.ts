@@ -104,11 +104,12 @@ export class AccessService {
     if (!row) throw new NotFoundException("记录不存在或无访问权限");
     return row;
   }
-  async output(a: Actor, r: string, row: any) {
+  async output(a: Actor, r: string, row: any, project?: any) {
     const x = plain(row);
     delete x.passwordHash;
     delete x.authVersion;
     delete x.operationLogs;
+    if (r === "sales-companies") delete x.status;
     if (r === "users") {
       x.avatarUrl = row.avatarStorageKey
         ? `/api/v1/users/${row.id}/avatar`
@@ -120,13 +121,15 @@ export class AccessService {
     if (!internal(a) && r === "projects") {
       delete x.lessorProfile;
       delete x.extra;
+      if (!row.salesCanViewExactRent && Array.isArray(x.typeConfigs))
+        x.typeConfigs = x.typeConfigs.map(({ referenceRent, ...type }: any) => type);
     }
     if (!internal(a) && r === "orders") {
       delete x.unitSnapshot;
       delete x.salesSnapshot;
     }
     if (!internal(a) && r === "units") {
-      const p = await this.db.project.findUnique({
+      const p = project ?? await this.db.project.findUnique({
         where: { id: row.projectId },
       });
       if (!p?.salesCanViewExactRent) delete x.referenceRent;

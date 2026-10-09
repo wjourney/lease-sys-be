@@ -1,3 +1,4 @@
+import { orderStatusGroups } from "../utils/order-status";
 import { z } from "zod";
 import { PrismaService } from "../../database/prisma.service";
 import { AccessService } from "../auth/access.service";
@@ -66,13 +67,9 @@ export abstract class ResourceQueryService {
         })),
       });
     if (q.status && r === "orders") {
-      const groupedStatuses: Record<string, string[]> = {
-        IN_PROGRESS: ["DRAFT", "PENDING", "ACTIVE"],
-        ENDED: ["COMPLETED", "CLOSED"],
-      };
       and.push(
-        groupedStatuses[q.status]
-          ? { status: { in: groupedStatuses[q.status] } }
+        orderStatusGroups[q.status]
+          ? { status: { in: orderStatusGroups[q.status] } }
           : { status: q.status },
       );
     } else if (
@@ -181,17 +178,20 @@ export abstract class ResourceQueryService {
       (this.db as any)[delegate[r]].count({ where: { AND: and } }),
     ]);
     return {
-      items: await Promise.all(items.map((x) => this.enrich(a, x))),
+      items: await this.enrichMany(a, items),
       total,
       page,
       pageSize,
     };
   }
-  async enrich(a: Actor, row: any) {
+  protected async enrichMany(a: Actor, rows: any[]) {
+    return Promise.all(rows.map((row) => this.enrich(a, row)));
+  }
+  async enrich(a: Actor, row: any, related?: { project?: any }) {
     const r = this.resource;
-    const x = await this.access.output(a, r, row);
+    const x = await this.access.output(a, r, row, related?.project);
     if (row.projectId) {
-      const p = await this.db.project.findUnique({
+      const p = related?.project ?? await this.db.project.findUnique({
         where: { id: row.projectId },
         select: { name: true },
       });

@@ -1,3 +1,4 @@
+import { orderInProgress } from "../../common/utils/order-status";
 import { billAmounts } from "../incomes/bill-query";
 import { orderSettlement } from "./order-settlement";
 import { Inject, Injectable } from "@nestjs/common";
@@ -282,15 +283,15 @@ export class OrderDetailService {
         edit: rights.write.includes("orders") && order.status !== "CLOSED",
         editLease:
           rights.write.includes("orders") &&
-          order.status === "PENDING" &&
+          orderInProgress(order.status) &&
           !hasPayments,
         close:
           rights.write.includes("orders") &&
-          order.status === "PENDING" &&
+          orderInProgress(order.status) &&
           !hasPayments,
         moveIn:
-          rights.manageOrders && order.status === "ACTIVE" && !order.moveInOn,
-        terminate: rights.manageOrders && order.status === "ACTIVE",
+          rights.manageOrders && orderInProgress(order.status) && !order.moveInOn,
+        terminate: rights.manageOrders && orderInProgress(order.status),
         handover:
           rights.manageOrders &&
           order.status === "COMPLETED" &&

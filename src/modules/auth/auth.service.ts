@@ -67,7 +67,6 @@ export class AuthService {
       accountExpired(user.expiresAt) ||
       (user.salesCompanyId &&
         (!c ||
-          c.status !== "ACTIVE" ||
           c.deletedAt ||
           (c.serviceEndsOn &&
             c.serviceEndsOn.getTime() + 86400000 < Date.now())))

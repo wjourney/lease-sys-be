@@ -48,7 +48,6 @@ export class AuthGuard implements CanActivate {
         if (
           !c ||
           c.deletedAt ||
-          c.status !== "ACTIVE" ||
           (c.serviceEndsOn && c.serviceEndsOn.getTime() + 86400000 < Date.now())
         )
           throw new Error();

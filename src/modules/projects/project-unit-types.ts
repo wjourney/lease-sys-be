@@ -2,19 +2,19 @@ import { number } from "../../common/utils/value";
 
 // Existing units remain usable while old global types are moved into project forms.
 // Global names are read only for codes already used by this project, never as new choices.
-export async function projectUnitTypes(tx: any, project: any) {
+export async function projectUnitTypes(tx: any, project: any, suppliedUnits?: any[], suppliedDictionary?: any) {
   const configured: any[] = Array.isArray(project.typeConfigs)
     ? project.typeConfigs
     : [];
-  const units = await tx.unit.findMany({
-    where: { projectId: project.id },
+  const units = (suppliedUnits ?? await tx.unit.findMany({
+    where: { projectId: project.id, deletedAt: null },
     select: { unitTypeCode: true, area: true, minRent: true, maxRent: true },
-  });
+  })).filter((unit: any) => !unit.deletedAt);
   const missing = [...new Set(units.map((u: any) => u.unitTypeCode))].filter(
     (code) => !configured.some((c) => c.code === code),
   );
   const dictionary = missing.length
-    ? await tx.systemSetting.findUnique({ where: { key: "unit_types" } })
+    ? (suppliedDictionary !== undefined ? suppliedDictionary : await tx.systemSetting.findUnique({ where: { key: "unit_types" } }))
     : null;
   const bounds = (rows: any[], key: string, max: boolean) =>
     rows.reduce(

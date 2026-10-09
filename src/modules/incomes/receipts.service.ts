@@ -367,37 +367,9 @@ export class ReceiptsService {
       a,
       "更新收款进度",
     );
-    if (!root.orderId) return;
-    const o = await tx.order.findUnique({ where: { id: root.orderId } });
-    if (!o || !["PENDING", "ACTIVE"].includes(o.status)) return;
-    const initial = await tx.income.findMany({
-      where: {
-        orderId: o.id,
-        recordType: "RECEIVABLE",
-        deletedAt: null,
-        status: { not: "VOID" },
-        sourceKey: {
-          in: [
-            `deposit:${o.id}`,
-            `rent:${o.id}:${o.startsOn.toISOString().slice(0, 10)}`,
-          ],
-        },
-      },
-    });
-    let full = initial.length > 0;
-    for (const bill of initial)
-      if ((await this.balances.totals(tx, bill.id)).remaining.gt(0))
-        full = false;
-    // Receiving money never implies a physical move-in.
-    await update(
-      tx,
-      "orders",
-      o,
-      { status: full ? "ACTIVE" : "PENDING" },
-      a,
-      "更新租赁生效状态",
-    );
+    // Order lifecycle is independent of payment progress.
   }
+
   async confirm(a: Actor, key: string, approve: boolean, reason?: string) {
     demand(financial(a));
     return this.db.$transaction(
