@@ -234,6 +234,8 @@ export class OrderLifecycleService {
     const parsed = (draftId ? OrdersSchema.partial() : OrdersSchema)
       .strict()
       .parse(input);
+    if (!draftId && (!parsed.projectId || !parsed.unitId))
+      fail("请选择项目和单位");
     return this.db.$transaction(
       async (tx) => {
         let draft: any;
@@ -269,12 +271,16 @@ export class OrderLifecycleService {
           await lock(tx, "units", d.unitId);
           unit = await this.access.get(a, "units", d.unitId, tx);
           project = await this.access.get(a, "projects", unit.projectId, tx);
+          if (d.projectId && d.projectId !== unit.projectId)
+            fail("单位不属于所选项目");
           if (!unit.enabled || project.status !== "ACTIVE")
             fail("项目或单位已停用");
           d.projectId = unit.projectId;
           d.monthlyRent ??= unit.referenceRent?.toString();
         } else if (d.projectId)
           project = await this.access.get(a, "projects", d.projectId, tx);
+        if (!draftId && !number(d.monthlyRent).gt(0))
+          fail("请填写大于零的月租");
         if (d.salesUserId) {
           sales = await tx.user.findFirst({
             where: {

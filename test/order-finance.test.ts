@@ -595,35 +595,37 @@ test("unactivated order never generates subsequent rent bills", async () => {
   );
 });
 
-test("company name alone creates an inert draft with defaults and no financial artifacts", async () => {
+test("new orders require a project and unit without creating financial artifacts", async () => {
   const f = fixture();
   f.tables.order.length = 0;
   f.tables.income.length = 0;
-  const order = await f.lifecycle.createOrder(admin, {
-    tenantName: "海湾有限公司",
-  });
-  assert.equal(order.status, "DRAFT");
-  assert.equal(order.occupancyState, "RELEASED");
-  assert.equal(order.unitId, null);
-  assert.equal(order.monthlyRent, null);
-  assert.equal(order.depositAmount, null);
-  assert.equal(order.tenantType, "COMPANY");
-  assert.equal(order.paymentIntervalMonths, 1);
+  await assert.rejects(
+    f.lifecycle.createOrder(admin, { tenantName: "海湾有限公司" }),
+    /请选择项目和单位/,
+  );
+  assert.equal(f.tables.order.length, 0);
   assert.equal(f.tables.income.length, 0);
   assert.equal(f.tables.commission.length, 0);
   assert.equal(f.tables.invoice.length, 0);
-  const updated = await f.lifecycle.editOrder(admin, order.id, {
-    revision: order.revision,
-    tenantName: "海湾有限公司",
-    tenantType: "PERSON",
-    registrationNoType: null,
-    moveInOn: null,
-  });
-  assert.equal(updated.status, "DRAFT");
 });
-test("completing draft generates monthly bills exactly once without requiring a salesperson or commission", async () => {
+test("completing a legacy draft generates monthly bills exactly once", async () => {
   const f = fixture();
+  const draft = {
+    ...f.order,
+    status: "DRAFT",
+    occupancyState: "RELEASED",
+    unitId: null,
+    projectId: null,
+    salesUserId: null,
+    salesCompanyId: null,
+    monthlyRent: null,
+    depositAmount: null,
+    tenantName: "海湾有限公司",
+    startsOn: new Date("2026-10-07"),
+    endsOn: null,
+  };
   f.tables.order.length = 0;
+  f.tables.order.push(draft);
   f.tables.income.length = 0;
   const unit = f.tables.unit[0];
   Object.assign(unit, {
@@ -636,10 +638,6 @@ test("completing draft generates monthly bills exactly once without requiring a 
     id: f.order.projectId,
     status: "ACTIVE",
     name: "海湾",
-  });
-  const draft = await f.lifecycle.createOrder(admin, {
-    tenantName: "海湾有限公司",
-    startsOn: "2026-10-07",
   });
   const order = await f.lifecycle.editOrder(admin, draft.id, {
     revision: draft.revision,
@@ -725,7 +723,7 @@ test("new order normalizes commission to monthly installments with a per-month a
   f.tables.salesCompany.push({ id: f.order.salesCompanyId, status: "ACTIVE" });
   f.tables.user.push({ id: f.order.salesUserId, role: "SALES", status: "ACTIVE", salesCompanyId: f.order.salesCompanyId });
   const created = await f.lifecycle.createOrder(admin, {
-    tenantName: "月结公司", unitId: f.order.unitId, salesUserId: f.order.salesUserId,
+    tenantName: "月结公司", projectId: f.order.projectId, unitId: f.order.unitId, salesUserId: f.order.salesUserId,
     startsOn: "2026-10-07", endsOn: "2027-10-06",
     commission: { mode: "ONE_TIME", amount: "50", dueOn: "2026-10-10" },
   });

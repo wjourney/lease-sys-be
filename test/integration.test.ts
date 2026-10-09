@@ -794,6 +794,7 @@ test("full workflow and authorization invariants", async (t) => {
         "POST",
         "/orders",
         {
+          projectId: pending.projectId,
           unitId: pending.unitId,
           salesUserId: pending.salesUserId,
           tenantType: "PERSON",
@@ -1046,6 +1047,7 @@ test("full workflow and authorization invariants", async (t) => {
       201,
     );
     const body = {
+      projectId: existing.projectId,
       unitId: unit.id,
       salesUserId: order.salesUserId,
       tenantType: "COMPANY",
@@ -1077,6 +1079,8 @@ test("full workflow and authorization invariants", async (t) => {
         paymentMethod: "BANK",
       },
     };
+    await admin.call("POST", "/orders", { ...body, projectId: undefined }, 400);
+    await admin.call("POST", "/orders", { ...body, unitId: undefined }, 400);
     await admin.call("POST", "/orders", {
       ...body,
       initialPayment: { ...body.initialPayment, paid: false },
@@ -1197,6 +1201,7 @@ test("full workflow and authorization invariants", async (t) => {
       201,
     );
     let created = await admin.call("POST", "/orders", {
+      projectId: template.projectId,
       unitId: unit.id,
       salesUserId: order.salesUserId,
       tenantType: "PERSON",
@@ -1465,6 +1470,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       "POST",
       "/orders",
       {
+        projectId: template.projectId,
         unitId: unit.id,
         salesUserId: order.salesUserId,
         tenantType: "PERSON",
