@@ -1,3 +1,4 @@
+import { uploadFileType } from "./upload-file-type";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
@@ -24,30 +25,8 @@ export class MaterialFilesService {
     file: Express.Multer.File,
     replacingMaterialGroupId?: string,
   ) {
-    if (!file || file.size > 30 * 1024 * 1024) fail("请选择小于 30MB 的文件");
+    const detected = uploadFileType(file, payload.category);
     const b = file.buffer;
-    const detected =
-      b.subarray(0, 4).toString() === "%PDF"
-        ? "application/pdf"
-        : b[0] === 0x89 && b.subarray(1, 4).toString() === "PNG"
-          ? "image/png"
-          : b[0] === 0xff && b[1] === 0xd8
-            ? "image/jpeg"
-            : b.subarray(0, 4).toString() === "RIFF" &&
-                b.subarray(8, 12).toString() === "WEBP"
-              ? "image/webp"
-              : b.subarray(4, 8).toString() === "ftyp"
-                ? "video/mp4"
-                : null;
-    if (!detected) return fail("支持 PDF、PNG、JPEG、WebP 和 MP4");
-    if (payload.category === "LOGO" && !detected.startsWith("image/"))
-      fail("项目 Logo 仅支持图片文件");
-    if (payload.category === "PHOTO" && !detected.startsWith("image/"))
-      fail("图片仅支持图片文件");
-    if (payload.category === "VIDEO" && detected !== "video/mp4")
-      fail("视频仅支持 MP4 文件");
-    if (payload.category === "PROJECT_FILE" && detected === "video/mp4")
-      fail("文件不支持视频，请上传至视频栏目");
     const data = await this.materials.create(a, payload, {
       replacingMaterialGroupId,
     });

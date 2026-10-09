@@ -1,3 +1,5 @@
+import { BatchMediaUploadSchema, readBatchMedia, signBatchMedia } from "./batch-media";
+import { uploadFileType } from "../materials/upload-file-type";
 import { createHash } from "node:crypto";
 import { UnitBatchSchema } from "./dto/unit-batch.schema";
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
@@ -61,11 +63,23 @@ export class UnitsService extends ResourceService {
     });
     if (occupied) fail("已租单位不能删除");
   }
+  async uploadBatchMedia(a: Actor, body: unknown, file: Express.Multer.File) {
+    this.access.allow(a, "units", true);
+    const { projectId, category } = BatchMediaUploadSchema.parse(body);
+    await this.access.get(a, "projects", projectId);
+    const mimeType = uploadFileType(file, category);
+    const originalName = normalizeUploadName(file.originalname);
+    if ([...originalName].length > 255) fail("文件名不能超过 255 个字符");
+    const stored = await this.storage.save(file.buffer, mimeType);
+    // No business record until the batch commits; unused uploads are collected by storage cleanup.
+    const media = { ...stored, category, mimeType, originalName };
+    return { token: signBatchMedia(a.id, projectId, media), name: media.originalName, category };
+  }
   async batch(a: Actor, body: unknown, preview = false) {
     this.access.allow(a, "units", true);
     const input = UnitBatchSchema.parse(body);
-    const { requestId, projectId, rows } = input;
-    const fingerprint = createHash("sha256").update(JSON.stringify({ projectId, rows })).digest("hex");
+    const { requestId, projectId, rows, mediaTokens = [] } = input;
+    const fingerprint = createHash("sha256").update(JSON.stringify({ projectId, rows, ...(mediaTokens.length ? { mediaTokens } : {}), ...(input.sharedMediaIndexes !== undefined ? { sharedMediaIndexes: input.sharedMediaIndexes } : {}) })).digest("hex");
     return this.db.$transaction(async (tx) => {
       await lock(tx, "projects", projectId);
       const project = await this.access.get(a, "projects", projectId, tx);
@@ -75,12 +89,19 @@ export class UnitsService extends ResourceService {
           throw new ConflictException("重复提交编号冲突");
         return { ok: true, replayed: true, unitIds: previous.unitIds, count: (previous.unitIds as string[]).length };
       }
+      const media = mediaTokens.map((token) => readBatchMedia(token, a.id, projectId));
+      if (new Set(media.map((file) => file.storageKey)).size !== media.length) fail("批量资料不能重复");
+      for (const file of media) await this.storage.size(file);
+      const sharedIndexes = input.sharedMediaIndexes ?? media.map((_, i) => i);
+      const rowIndexes = rows.map(row => row.mediaIndexes ?? sharedIndexes);
+      if ([sharedIndexes, ...rowIndexes].some(indexes => indexes.some(i => i >= media.length))) fail("批量资料索引无效");
       const types = await projectUnitTypes(tx, project);
       const prepared: any[] = [];
       const issues: { row: number; message: string }[] = [];
       const seen = new Map<string, number>();
       for (const [index, item] of rows.entries()) {
-        const data: any = { projectId, ...item };
+        const { mediaIndexes: _mediaIndexes, ...fields } = item;
+        const data: any = { projectId, ...fields };
         try {
           await this.validate(a, data, tx, undefined, types);
           const identity = data.unitNo.normalize("NFKC").toLocaleLowerCase();
@@ -98,9 +119,14 @@ export class UnitsService extends ResourceService {
       if (issues.length) return { ok: false, issues };
       if (preview) return { ok: true, count: rows.length };
       const unitIds: string[] = [];
-      for (const data of prepared) {
+      for (const [index, data] of prepared.entries()) {
         const unit = await insert(tx, "units", data, a);
         unitIds.push(unit.id);
+        for (const [sortOrder, file] of rowIndexes[index].map(i => media[i]).entries()) {
+          await insert(tx, "materials", {
+            ...file, unitId: unit.id, title: [...file.originalName].slice(0, 191).join(""), visibility: "SHARED", sortOrder,
+          }, a);
+        }
       }
       await tx.unitCreationBatch.create({ data: { id: requestId, projectId, actorId: a.id, fingerprint, unitIds } });
       return { ok: true, count: unitIds.length, unitIds };

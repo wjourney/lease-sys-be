@@ -1,3 +1,4 @@
+import { FileInterceptor } from "@nestjs/platform-express";
 import {
   Body,
   Controller,
@@ -10,6 +11,8 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { UnitsService } from "./units.service";
@@ -37,6 +40,11 @@ export class UnitsController {
       r.actor,
       await this.service.create(r.actor, body),
     );
+  }
+  @Post("batch-media")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 30 * 1024 * 1024, files: 1 } }))
+  uploadBatchMedia(@Req() r: any, @Body() body: any, @UploadedFile() file: Express.Multer.File) {
+    return this.service.uploadBatchMedia(r.actor, body, file);
   }
   @Post("batch-preview") previewBatch(@Req() r: any, @Body() body: any) {
     return this.service.batch(r.actor, body, true);

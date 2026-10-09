@@ -1822,3 +1822,62 @@ test("batch unit creation is atomic, concurrent-safe, idempotent and permission 
   const synced = await admin.call("GET", `/units/${one.unitIds[1]}`);
   assert.equal(Number(synced.referenceRent), 160);
 });
+
+test("batch shared media uploads once, remains separate per unit and retries safely", async () => {
+  const project = await admin.call("POST", "/projects", {
+    name: `批量资料-${randomUUID().slice(0, 8)}`, region: "港岛", address: "资料测试地址",
+    typeConfigs: [{ code: "M", name: "套房", building: "A", floor: "1", area: "40", layout: "两房", minRent: "100", maxRent: "200", referenceRent: "150" }],
+  }, 201);
+  async function upload(category: string, client = operations, expected = 201) {
+    const bytes = category === "PHOTO" ? new Uint8Array([0x89, 0x50, 0x4e, 0x47]) : Buffer.from(category === "VIDEO" ? "0000ftypmp42" : "%PDF-1.4");
+    const body = new FormData(); body.append("projectId", project.id); body.append("category", category);
+    body.append("file", new Blob([bytes]), category === "PHOTO" ? "照片.png" : category === "VIDEO" ? "视频.mp4" : "资料.pdf");
+    const response = await fetch(base + "/units/batch-media", { method: "POST", headers: { Cookie: client.cookies, "X-CSRF-Token": client.csrf }, body });
+    const data = await response.json(); assert.equal(response.status, expected, JSON.stringify(data)); return data;
+  }
+  await upload("PHOTO", sales, 403);
+  const uploads = await Promise.all(["PHOTO", "VIDEO", "PROJECT_FILE"].map(c => upload(c)));
+  // Staged files never appear in project media or as half-created units.
+  assert.equal((await admin.call("GET", `/materials?projectId=${project.id}`)).total, 0);
+  assert.equal((await admin.call("GET", `/units?projectId=${project.id}`)).total, 0);
+  const body = { requestId: randomUUID(), projectId: project.id, mediaTokens: uploads.map(x => x.token), rows: ["01", "02"].map(roomNo => ({ roomNo, unitTypeCode: "M" })) };
+  await admin.call("POST", "/units/batch", body, 400); // Tickets are bound to the uploading actor.
+  const result = await operations.call("POST", "/units/batch", body, 201);
+  assert.equal(result.count, 2);
+  const one = await operations.call("GET", `/materials?unitId=${result.unitIds[0]}`);
+  const two = await operations.call("GET", `/materials?unitId=${result.unitIds[1]}`);
+  assert.equal(one.total, 3); assert.equal(two.total, 3);
+  for (const category of ["PHOTO", "VIDEO", "PROJECT_FILE"]) {
+    const a = one.items.find((x: any) => x.category === category), b = two.items.find((x: any) => x.category === category);
+    assert.equal(a.storageKey, b.storageKey); assert.notEqual(a.materialGroupId, b.materialGroupId);
+    const response = await fetch(base + `/materials/${a.id}/download`, { headers: { Cookie: operations.cookies } }); assert.equal(response.status, 200);
+  }
+  assert.equal((await operations.call("POST", "/units/batch", body, 201)).replayed, true);
+  assert.equal((await operations.call("GET", `/materials?unitId=${result.unitIds[0]}`)).total, 3);
+  await operations.call("DELETE", `/materials/${one.items[0].id}`, { reason: "仅移除一个单位资料" });
+  assert.equal((await operations.call("GET", `/materials?unitId=${result.unitIds[1]}`)).total, 3);
+});
+
+
+test("HTTP batch creation assigns per-row media and supports a full 100-row payload", { timeout: 30000 }, async () => {
+  const typeCode = "类".repeat(180);
+  const project = await admin.call("POST", "/projects", {
+    name: "独立资料测试", region: "港岛", address: "测试地址",
+    typeConfigs: [{ code: typeCode, name: "套房", building: "A", floor: "1", area: "40", layout: "两房", minRent: "100", maxRent: "200", referenceRent: "150" }],
+  }, 201);
+  const tokens = [];
+  for (let i = 0; i < 30; i++) {
+    const body = new FormData(); body.append("projectId", project.id); body.append("category", "PROJECT_FILE");
+    body.append("file", new Blob(["%PDF-1.4"]), "长".repeat(240) + `${i}.pdf`);
+    const response = await fetch(base + "/units/batch-media", { method: "POST", headers: { Cookie: admin.cookies, "X-CSRF-Token": admin.csrf }, body, signal: AbortSignal.timeout(10000) });
+    assert.equal(response.status, 201); tokens.push((await response.json()).token);
+  }
+  const body = { requestId: randomUUID(), projectId: project.id, mediaTokens: tokens, sharedMediaIndexes: [0], rows: Array.from({length: 100}, (_, i) => ({ roomNo: "房".repeat(90) + i, unitTypeCode: typeCode, ...(i === 0 ? {mediaIndexes: [1, 2]} : i === 1 ? {mediaIndexes: []} : {}) })) };
+  assert(Buffer.byteLength(JSON.stringify(body)) > 100 * 1024);
+  const result = await admin.call("POST", "/units/batch", body, 201); assert.equal(result.count, 100);
+  const first = await admin.call("GET", `/materials?unitId=${result.unitIds[0]}`);
+  assert.equal(first.total, 2); assert(first.items.every((f: any) => f.originalName.length > 191 && f.title.length === 191));
+  assert.equal((await admin.call("GET", `/materials?unitId=${result.unitIds[1]}`)).total, 0);
+  assert.equal((await admin.call("GET", `/materials?unitId=${result.unitIds[2]}`)).total, 1);
+  assert.equal((await admin.call("POST", "/units/batch", body, 201)).replayed, true);
+});
