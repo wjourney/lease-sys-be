@@ -1,4 +1,5 @@
 import { IncomesModule } from "../incomes/incomes.module";
+import { DepositsService } from "./deposits.service";
 import { OrderDetailService } from "./order-detail.service";
 import { Module } from "@nestjs/common";
 import { CommonModule } from "../../common/common.module";
@@ -13,6 +14,7 @@ import { OrdersService } from "./orders.service";
   imports: [CommonModule, BillingModule, StorageModule, IncomesModule],
   controllers: [OrdersController],
   providers: [
+    DepositsService,
     OrderDetailService,
     OrdersService,
     OrderLifecycleService,
@@ -20,6 +22,7 @@ import { OrdersService } from "./orders.service";
     ContractsService,
   ],
   exports: [
+    DepositsService,
     OrderDetailService,
     OrdersService,
     OrderLifecycleService,

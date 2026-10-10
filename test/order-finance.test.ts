@@ -1,3 +1,6 @@
+import { DepositSettlementService } from "../src/modules/orders/deposit-settlement.service";
+import { DepositsService } from "../src/modules/orders/deposits.service";
+import { depositSummary } from "../src/modules/orders/deposit-summary";
 import { ContractsService, orderContractSnapshot } from "../src/modules/orders/contracts.service";
 import "reflect-metadata";
 import assert from "node:assert/strict";
@@ -230,7 +233,7 @@ function fixture() {
           id: randomUUID(),
           revision: 1,
           deletedAt: null,
-          status: name === "invoice" ? "ACTIVE" : "OPEN",
+          status: name === "invoice" ? "ACTIVE" : name === "expense" ? "UNPAID" : "OPEN",
           operationLogs: [],
           currency: "HKD",
           adjustmentAmount: "0",
@@ -1032,4 +1035,117 @@ test("an order changed during rendering keeps its original contract and discards
   assert.equal(f.tables.material.length, 1);
   assert.equal(f.tables.material[0].status, "ACTIVE");
   assert.equal(f.state.discarded.length, 1);
+});
+
+
+async function fundedDepositFixture() {
+  const f = editableFixture();
+  await f.receipts.batch(admin, f.order.id, f.batch());
+  f.tables.order[0].status = "COMPLETED";
+  return { ...f, deposits: new DepositSettlementService(f.db, f.access) };
+}
+
+test("deposit ledger and order detail share actual amounts, states, filters and authorization", async () => {
+  const f = await fundedDepositFixture();
+  Object.assign(f.tables.order[0], { orderNo: "deposit-ledger-order" });
+  f.tables.project.push({ id: f.order.projectId, name: "押金测试项目" });
+  const ledger = new DepositsService(f.db);
+  const detail = await new OrderDetailService(f.db, f.access, {} as any).related(admin, f.tables.order[0]);
+  const page = await ledger.list(admin, { q: "deposit-ledger", pageSize: 1 });
+  assert.equal(page.total, 1); assert.equal(page.items.length, 1);
+  const { refunds, ...summary } = detail.deposit;
+  assert.deepEqual(page.items[0].deposit, summary);
+  assert.equal(page.items[0].deposit.state, "REFUND_PENDING");
+  assert.equal((await ledger.list(admin, { state: "HELD" })).total, 0);
+  assert.equal((await ledger.list(admin, { q: "押金测试项目", projectId: f.order.projectId })).total, 1);
+  assert.equal((await ledger.list(admin, { q: "not-found" })).total, 0);
+  assert.equal((await ledger.list(admin, { page: 2, pageSize: 1 })).items.length, 0);
+  for (const role of ["SALES", "SALES_COMPANY_ADMIN", "OPERATIONS"])
+    await assert.rejects(ledger.list({ ...admin, role }, {}));
+  await assert.rejects(ledger.list(admin, { state: "SETTLEMENT_PENDING" }));
+  await assert.rejects(ledger.list(admin, { pageSize: 101 }));
+});
+
+test("unpaid deposit correction replaces offsets and one refund; retries and stale edits do not duplicate money", async () => {
+  const f = await fundedDepositFixture();
+  const bill = { ...f.tables.income[0], id: randomUUID(), recordType: "RECEIVABLE", feeType: "OTHER",
+    status: "OPEN", amount: "100", depositOffsetAmount: "0", adjustmentAmount: "0" };
+  f.tables.income.push(bill);
+  const first = { deductionAmount: "50", reason: "维修", items: [{ label: "维修", note: "更换", amount: "50", incomeId: bill.id }] };
+  await f.deposits.deposit(admin, f.order.id, first);
+  assert.equal(f.tables.expense.length, 1); assert.equal(String(f.tables.expense[0].amount), "150");
+  assert.equal(String(bill.depositOffsetAmount), "50");
+  const next = { ...first, deductionAmount: "20", revision: f.tables.order[0].revision,
+    items: [{ ...first.items[0], amount: "20" }] };
+  await f.deposits.deposit(admin, f.order.id, next);
+  assert.equal(f.tables.expense.length, 1); assert.equal(String(f.tables.expense[0].amount), "180");
+  assert.equal(String(bill.depositOffsetAmount), "20");
+  await f.deposits.deposit(admin, f.order.id, next);
+  assert.equal(f.tables.expense.length, 1); assert.equal(String(bill.depositOffsetAmount), "20");
+  await assert.rejects(f.deposits.deposit(admin, f.order.id, { ...next, deductionAmount: "0", items: [] }), /押金资料已更新/);
+  await f.deposits.deposit(admin, f.order.id, { deductionAmount: "0", items: [], revision: f.tables.order[0].revision });
+  assert.equal(String(f.tables.income.find(r => r.id === bill.id).depositOffsetAmount), "0");
+  assert.equal(String(f.tables.expense[0].amount), "200");
+  assert.equal(f.tables.order[0].depositDeductionReason, "全额退还押金");
+});
+
+test("refunded deposits and offsets followed by cash collection cannot be corrected", async () => {
+  for (const paid of [false, true]) {
+    const f = await fundedDepositFixture();
+    const bill = { ...f.tables.income[0], id: randomUUID(), recordType: "RECEIVABLE", feeType: "OTHER", status: "OPEN", amount: "100" };
+    f.tables.income.push(bill);
+    await f.deposits.deposit(admin, f.order.id, { deductionAmount: "50", reason: "欠款", items: [{ label: "欠款", note: "抵扣", amount: "50", incomeId: bill.id }] });
+    if (paid) Object.assign(f.tables.expense[0], { status: "PAID", paidAmount: "150" });
+    else f.tables.income.push({ id: randomUUID(), parentId: bill.id, status: "CONFIRMED", amount: "50" });
+    const before = JSON.parse(JSON.stringify(f.tables));
+    await assert.rejects(f.deposits.deposit(admin, f.order.id, { deductionAmount: "0", items: [], revision: f.tables.order[0].revision }), paid ? /已退款或已结清/ : /已登记收款/);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.tables)), before);
+  }
+});
+
+test("deposit states use actual receipts, retain money during renewal and clear a full deduction", () => {
+  const order = { status: "ACTIVE", depositAmount: "200" };
+  assert.equal(depositSummary(order, 0, 0, []).state, "UNCOLLECTED");
+  assert.equal(depositSummary(order, 200, 0, []).state, "HELD");
+  assert.equal(depositSummary({ ...order, status: "COMPLETED" }, 200, 0, []).state, "REFUND_PENDING");
+  assert.equal(depositSummary({ ...order, status: "COMPLETED", depositSettledAt: new Date(), depositDeductionAmount: "200" }, 200, 0, []).state, "SETTLED");
+  assert.equal(depositSummary({ ...order, depositAmount: "0" }, 0, 0, []).state, "NOT_REQUIRED");
+  assert.equal(depositSummary({ ...order, status: "COMPLETED" }, 0, 0, []).state, "SETTLED");
+});
+
+test("natural expiry can renew before settlement, restore occupancy and keep actual deposit", async () => {
+  const f = await fundedDepositFixture();
+  Object.assign(f.tables.order[0], { endsOn: new Date("2026-10-01"), startsOn: new Date("2026-09-01"),
+    occupancyState: "RELEASED", handedOverAt: new Date("2026-10-01"), actualTerminationOn: null });
+  const history = structuredClone(f.tables.income);
+  const saved = await f.lifecycle.renew(admin, f.order.id, { revision: f.tables.order[0].revision });
+  assert.equal(saved.status, "ACTIVE"); assert.equal(saved.occupancyState, "OCCUPIED");
+  assert.equal(saved.handedOverAt, null); assert.equal(saved.depositSettledAt, undefined);
+  assert.deepEqual(f.tables.income.filter(r => history.some(old => old.id === r.id)), history);
+  const detail = await new OrderDetailService(f.db, f.access, {} as any).related(admin, saved);
+  assert.equal(detail.deposit.state, "HELD"); assert.equal(detail.deposit.received, "200.00");
+  assert.equal(f.tables.expense.length, 0);
+});
+
+for (const scenario of ["settled", "early", "occupied", "expired-end"]) test(`late renewal rejects ${scenario} without changing money`, async () => {
+  const f = editableFixture();
+  Object.assign(f.tables.order[0], { status: "COMPLETED", endsOn: new Date("2026-09-01"), startsOn: new Date("2026-08-01"), actualTerminationOn: null });
+  if (scenario === "settled") f.tables.order[0].depositSettledAt = new Date();
+  if (scenario === "early") f.tables.order[0].actualTerminationOn = new Date("2026-08-15");
+  if (scenario === "occupied") f.tables.order.push({ ...f.tables.order[0], id: randomUUID(), status: "ACTIVE", occupancyState: "OCCUPIED" });
+  const before = structuredClone(f.tables);
+  await assert.rejects(f.lifecycle.renew(admin, f.order.id, { revision: 1, ...(scenario === "expired-end" ? { endsOn: "2026-09-02" } : {}) }));
+  assert.deepEqual(f.tables, before);
+});
+
+
+test("deposit deductions require a real reason and cannot exceed actual receipts", async () => {
+  const f = await fundedDepositFixture();
+  await assert.rejects(f.deposits.deposit(admin, f.order.id, { deductionAmount: "10" }), /请填写扣款原因/);
+  await assert.rejects(f.deposits.deposit(admin, f.order.id, { deductionAmount: "201", reason: "维修" }), /超过实收/);
+  assert.equal(f.tables.expense.length, 0); assert.equal(f.tables.order[0].depositSettledAt, undefined);
+  await f.deposits.deposit(admin, f.order.id, { deductionAmount: "20", reason: "维修", items: [{ label: "维修", amount: "20", note: "门锁" }] });
+  const revision = f.tables.order[0].revision;
+  await f.deposits.deposit(admin, f.order.id, { deductionAmount: "20.00", reason: "维修", items: [{ label: "维修", amount: "20.00", note: "门锁" }] });
+  assert.equal(f.tables.order[0].revision, revision); assert.equal(f.tables.expense.length, 1);
 });

@@ -1,3 +1,9 @@
+import {
+  paymentActors,
+  resolveOperationActors,
+} from "../../common/database/operation-actors";
+import { depositSummary, naturallyExpiredRenewable } from "./deposit-summary";
+import { leaseToday } from "../../common/utils/lease-date";
 import { orderInProgress } from "../../common/utils/order-status";
 import { billAmounts } from "../incomes/bill-query";
 import { orderSettlement } from "./order-settlement";
@@ -99,6 +105,27 @@ export class OrderDetailService {
     ]);
     const sum = (rows: any[], key: string) =>
       rows.reduce((n, x) => n.add(x[key] ?? 0), number(0));
+    const receiptActors = await resolveOperationActors(
+      this.db,
+      receipts.map((r) => ({
+        id: r.id,
+        ...((r.operationLogs as any[])?.find(
+          (log) => log.action === "CREATE",
+        ) ?? {}),
+      })),
+    );
+    const identityByReceipt = new Map(
+      receiptActors.map((r) => [
+        r.id,
+        {
+          actorName: r.actorName,
+          actorPhone: r.actorPhone,
+          actorUsername: r.actorUsername,
+          actorType: r.actorType,
+          actorDeleted: r.actorDeleted,
+        },
+      ]),
+    );
     const bills = roots.map((root) => {
       const children = receipts.filter((x) => x.parentId === root.id);
       const confirmed = sum(
@@ -117,6 +144,7 @@ export class OrderDetailService {
         operationLogs: undefined,
         receipts: children.map(({ operationLogs, ...r }) => ({
           ...plain(r),
+          ...identityByReceipt.get(r.id),
           voucherIncomeId: (r.recurrenceRule as any)?.voucherIncomeId || r.id,
         })),
         total: total.toFixed(2),
@@ -135,21 +163,44 @@ export class OrderDetailService {
     const refunds = expenses.filter(
       (x) => x.feeType === "DEPOSIT_REFUND" && x.status !== "VOID",
     );
-    const refunded = sum(refunds, "paidAmount"),
-      refundDue = sum(refunds, "amount").sub(refunded);
-    const deduction = number(order.depositDeductionAmount);
-    const depositState =
-      order.status === "CLOSED"
-        ? "CLOSED"
-        : order.depositSettledAt
-          ? refundDue.gt(0)
-            ? "REFUND_PENDING"
-            : "SETTLED"
-          : order.status === "COMPLETED"
-            ? "SETTLEMENT_PENDING"
-            : received.lt(order.depositAmount)
-              ? "COLLECTING"
-              : "HELD";
+    const refundPayments = await resolveOperationActors(
+      this.db,
+      (rights.read.includes("expenses") ? refunds : []).flatMap((refund) => {
+        const records =
+          Array.isArray(refund.paymentRecords) && refund.paymentRecords.length
+            ? (refund.paymentRecords as any[])
+            : number(refund.paidAmount).gt(0)
+              ? [
+                  {
+                    amount: refund.paidAmount,
+                    paidOn: refund.paidOn,
+                    fundAccountId: refund.fundAccountId,
+                    paymentMethod: refund.paymentMethod,
+                    bankReference: refund.bankReference,
+                  },
+                ]
+              : [];
+        return paymentActors(
+          records,
+          refund.operationLogs as any[],
+          !(refund.paymentRecords as any[])?.length,
+        ).map((record) => ({ ...record, expenseId: refund.id }));
+      }),
+    );
+    const deposit = depositSummary(order, received, pending, refunds);
+    const expiredRenewable =
+      naturallyExpiredRenewable(order, leaseToday()) &&
+      !refunds.length &&
+      (!order.unitId ||
+        !(await this.db.order.count({
+          where: {
+            unitId: order.unitId,
+            id: { not: order.id },
+            deletedAt: null,
+            status: { in: ["ACTIVE", "PENDING"] },
+            occupancyState: { not: "RELEASED" },
+          },
+        })));
     const first = bills.filter(
       (x) =>
         x.status !== "VOID" &&
@@ -269,16 +320,14 @@ export class OrderDetailService {
         }),
       ),
       deposit: {
-        state: depositState,
-        agreed: order.depositAmount,
-        received: received.toFixed(2),
-        pending: pending.toFixed(2),
-        deduction: deduction.toFixed(2),
-        refunded: refunded.toFixed(2),
-        refundDue: refundDue.toFixed(2),
-        held: received.sub(deduction).sub(refunded).toFixed(2),
+        ...deposit,
         refunds: rights.read.includes("expenses")
-          ? refunds.map(({ operationLogs, ...r }) => plain(r))
+          ? refunds.map(({ operationLogs, ...r }) => ({
+              ...plain(r),
+              paymentRecords: refundPayments.filter(
+                (p) => p.expenseId === r.id,
+              ),
+            }))
           : [],
       },
       firstPaymentStatus: firstState,
@@ -297,7 +346,9 @@ export class OrderDetailService {
           !hasPayments,
         close: false,
         moveIn: false,
-        renew: rights.manageOrders && orderInProgress(order.status),
+        renew:
+          rights.manageOrders &&
+          (orderInProgress(order.status) || expiredRenewable),
         terminate: rights.manageOrders && orderInProgress(order.status),
         handover: false,
         settle:
@@ -305,7 +356,8 @@ export class OrderDetailService {
           order.status === "COMPLETED" &&
           !order.depositSettledAt &&
           pending.eq(0),
-        refund: rights.finance && refundDue.gt(0),
+        reviseDeposit: rights.finance && deposit.canRevise && pending.eq(0),
+        refund: rights.finance && number(deposit.refundDue).gt(0),
       },
       materials: await Promise.all(
         materials.map(async (m) => ({

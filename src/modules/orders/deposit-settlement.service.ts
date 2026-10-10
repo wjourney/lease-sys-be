@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { isDeepStrictEqual } from "node:util";
 import { AccessService } from "../../common/auth/access.service";
@@ -19,7 +19,8 @@ export class DepositSettlementService {
     const d = z
       .object({
         deductionAmount: money,
-        reason: z.string().trim().min(1),
+        reason: z.string().trim().max(1000).optional(),
+        revision: z.number().int().min(1).optional(),
         items: z
           .array(
             z
@@ -42,11 +43,17 @@ export class DepositSettlementService {
         await lock(tx, "orders", key);
         const o = await this.access.get(a, "orders", key, tx);
         if (o.status !== "COMPLETED") fail("租约结束后才能结算押金");
-        const items =
+        if (number(d.deductionAmount).gt(0) && !d.items?.length && !d.reason)
+          fail("扣款时请填写扣款原因");
+        const reason =
+          d.reason ||
+          (number(d.deductionAmount).gt(0) ? "押金扣款结算" : "全额退还押金");
+        const items = (
           d.items ??
           (number(d.deductionAmount).gt(0)
-            ? [{ label: "押金扣款", amount: d.deductionAmount, note: d.reason }]
-            : []);
+            ? [{ label: "押金扣款", amount: d.deductionAmount, note: reason }]
+            : [])
+        ).map((item) => ({ ...item, amount: number(item.amount).toFixed(2) }));
         if (items.some((x) => number(x.amount).lte(0)))
           fail("扣款项目金额必须大于零");
         if (
@@ -55,15 +62,48 @@ export class DepositSettlementService {
             .eq(d.deductionAmount)
         )
           fail("扣款合计与明细不一致");
-        if (o.depositSettledAt) {
-          if (
-            number(o.depositDeductionAmount).eq(d.deductionAmount) &&
-            o.depositDeductionReason === d.reason &&
-            isDeepStrictEqual(o.depositDeductions, plain(items))
-          )
-            return o;
-          fail("押金已结算，请勿重复修改");
-        }
+        const unchanged =
+          o.depositSettledAt &&
+          number(o.depositDeductionAmount).eq(d.deductionAmount) &&
+          o.depositDeductionReason === reason &&
+          isDeepStrictEqual(
+            plain(
+              (Array.isArray(o.depositDeductions)
+                ? o.depositDeductions
+                : []
+              ).map((item: any) => ({
+                ...item,
+                amount: number(item.amount).toFixed(2),
+              })),
+            ),
+            plain(items),
+          );
+        if (unchanged) return o;
+        if (d.revision !== undefined && d.revision !== o.revision)
+          throw new ConflictException("押金资料已更新，请刷新后重新结算");
+        if (o.depositSettledAt && d.revision === undefined)
+          fail("修正押金结算需要最新版本，请刷新后重试");
+        const refundRecords = await tx.expense.findMany({
+          where: {
+            orderId: key,
+            feeType: "DEPOSIT_REFUND",
+            deletedAt: null,
+          },
+          orderBy: { id: "asc" },
+        });
+        for (const refund of refundRecords)
+          await lock(tx, "expenses", refund.id);
+        const activeRefunds = refundRecords.filter((r) => r.status !== "VOID");
+        if (!o.depositSettledAt && activeRefunds.length)
+          fail("押金退款资料不一致，请先核对记录");
+        if (
+          o.depositSettledAt &&
+          (activeRefunds.length !== 1 ||
+            activeRefunds[0].status !== "UNPAID" ||
+            number(activeRefunds[0].paidAmount).gt(0) ||
+            (activeRefunds[0].paymentRecords as any[])?.length)
+        )
+          fail("押金已退款或已结清，不能修改结算");
         const roots = await tx.income.findMany({
           where: {
             orderId: key,
@@ -104,7 +144,18 @@ export class DepositSettlementService {
               (byIncome.get(item.incomeId) ?? number(0)).add(item.amount),
             );
         }
-        for (const id of [...byIncome.keys()].sort()) {
+        const previous = new Map<string, any>();
+        if (o.depositSettledAt && Array.isArray(o.depositDeductions))
+          for (const item of o.depositDeductions as any[])
+            if (item.incomeId)
+              previous.set(
+                item.incomeId,
+                (previous.get(item.incomeId) ?? number(0)).add(item.amount),
+              );
+        const billIds = [
+          ...new Set([...byIncome.keys(), ...previous.keys()]),
+        ].sort();
+        for (const id of billIds) {
           await lock(tx, "incomes", id);
           const bill = await this.access.get(a, "incomes", id, tx);
           if (
@@ -131,23 +182,32 @@ export class DepositSettlementService {
             .add(bill.adjustmentAmount)
             .sub(confirmed)
             .sub(bill.depositOffsetAmount);
-          const offset = byIncome.get(id);
-          if (offset.gt(remaining)) fail("押金抵扣金额超过账单剩余应收");
+          const oldOffset = previous.get(id) ?? number(0);
+          const offset = byIncome.get(id) ?? number(0);
+          if (offset.eq(oldOffset)) continue;
+          if (oldOffset.gt(bill.depositOffsetAmount))
+            fail("抵扣账单已变化，请刷新后重新结算");
+          if (o.depositSettledAt && confirmed.gt(0))
+            fail("抵扣账单已登记收款，不能修改该笔抵扣");
+          if (offset.gt(remaining.add(oldOffset)))
+            fail("押金抵扣金额超过账单剩余应收");
           await update(
             tx,
             "incomes",
             bill,
             {
-              depositOffsetAmount: number(bill.depositOffsetAmount).add(offset),
-              status: remaining.eq(offset) ? "PAID" : "OPEN",
+              depositOffsetAmount: number(bill.depositOffsetAmount)
+                .sub(oldOffset)
+                .add(offset),
+              status: remaining.add(oldOffset).eq(offset) ? "PAID" : "OPEN",
             },
             a,
-            `押金抵扣：${d.reason}`,
+            `押金抵扣：${reason}`,
           );
         }
         // End the uncollected deposit obligation as part of explicit settlement.
         // The original contracted deposit stays on the order and in the audit trail.
-        for (const bill of roots) {
+        for (const bill of o.depositSettledAt ? [] : roots) {
           const paid = receipts
             .filter((r) => r.parentId === bill.id)
             .reduce((n, r) => n.add(r.amount), number(0));
@@ -160,11 +220,25 @@ export class DepositSettlementService {
               status: paid.gt(0) ? "PAID" : "VOID",
             },
             a,
-            `退租押金结算，终止未收押金：${d.reason}`,
+            `退租押金结算，终止未收押金：${reason}`,
           );
         }
         const refund = received.sub(d.deductionAmount);
-        if (refund.gt(0))
+        const existingRefund = activeRefunds[0];
+        if (existingRefund)
+          await update(
+            tx,
+            "expenses",
+            existingRefund,
+            {
+              amount: refund,
+              status: refund.gt(0) ? "UNPAID" : "VOID",
+              remark: reason,
+            },
+            a,
+            `修正押金结算：${reason}`,
+          );
+        else if (refund.gt(0))
           await insert(
             tx,
             "expenses",
@@ -180,7 +254,7 @@ export class DepositSettlementService {
               payeeName: o.tenantName,
               dueOn: new Date(),
               sourceKey: `deposit-refund:${key}`,
-              remark: d.reason,
+              remark: reason,
             },
             a,
           );
@@ -190,12 +264,12 @@ export class DepositSettlementService {
           o,
           {
             depositDeductionAmount: d.deductionAmount,
-            depositDeductionReason: d.reason,
+            depositDeductionReason: reason,
             depositDeductions: plain(items),
-            depositSettledAt: new Date(),
+            depositSettledAt: o.depositSettledAt ?? new Date(),
           },
           a,
-          d.reason,
+          reason,
         );
       },
       { timeout: 15000 },

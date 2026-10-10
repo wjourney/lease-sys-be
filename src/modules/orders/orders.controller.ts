@@ -18,12 +18,14 @@ import { sendFile } from "../../common/storage/file-response";
 import { ContractsService } from "./contracts.service";
 import { DepositSettlementService } from "./deposit-settlement.service";
 import { OrderLifecycleService } from "./order-lifecycle.service";
+import { DepositsService } from "./deposits.service";
 import { OrdersService } from "./orders.service";
 @ApiTags("orders")
 @Controller("orders")
 export class OrdersController {
   private readonly logger = new Logger(OrdersController.name);
   constructor(
+    @Inject(DepositsService) private depositLedger: DepositsService,
     @Inject(OrdersService) private service: OrdersService,
     @Inject(ReceiptsService) private receipts: ReceiptsService,
     @Inject(OrderLifecycleService) private lifecycle: OrderLifecycleService,
@@ -129,6 +131,9 @@ export class OrdersController {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="orders.csv"');
     res.send(await this.service.export(r.actor, q));
+  }
+  @Get("deposits") depositList(@Req() r: any, @Query() q: any) {
+    return this.depositLedger.list(r.actor, q);
   }
   @Get(":id/operations") operations(@Req() r: any, @Param("id") id: string) {
     return this.service.operations(r.actor, id);

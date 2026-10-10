@@ -1622,7 +1622,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       assert(ended.items.some((order: any) => order.id === o.id));
       const stillInProgress = await admin.call("GET", "/orders?status=IN_PROGRESS&pageSize=100");
       assert(!stillInProgress.items.some((order: any) => order.id === o.id));
-      assert.equal(o.deposit.state, "SETTLEMENT_PENDING");
+      assert.equal(o.deposit.state, "REFUND_PENDING");
       assert.equal(o.rentRefunds.length, 1);
       assert.equal(Number(o.rentRefunds[0].amount), 550);
       const settlement = {
@@ -1986,4 +1986,54 @@ test("all operation views resolve renamed and deleted operators without changing
   assert.equal(deleted.operations[0].actorName, "操作人现名");
   assert.equal(deleted.operations[0].actorPhone, phone);
   assert.equal(deleted.operations[0].actorDeleted, true);
+});
+
+
+test("deposit management reuses the order ledger and protects corrected refunds", async () => {
+  const project = await admin.call("POST", "/projects", {
+    name: `押金管理-${randomUUID().slice(0, 8)}`, propertyName: "押金回归物业", region: "港岛", address: "测试地址",
+    typeConfigs: [{ code: "L", name: "单间", building: "A座", floor: "1", area: "30", layout: "开放式", referenceRent: "150", minRent: "100", maxRent: "200" }],
+  }, 201);
+  const unit = await admin.call("POST", "/units", { projectId: project.id, unitTypeCode: "L", roomNo: "押金01", minLeaseMonths: 1 }, 201);
+  let lease = await admin.call("POST", "/orders", { projectId: project.id, unitId: unit.id,
+    tenantName: "押金管理租客", monthlyRent: "150", depositAmount: "300", depositPlan: "OTHER",
+    startsOn: "2026-01-01", endsOn: "2026-12-31" }, 201);
+  const path = `/orders/deposits?q=${encodeURIComponent(lease.orderNo)}`;
+  const get = () => admin.call("GET", `/orders/${lease.id}`);
+  assert.equal((await finance.call("GET", path)).items[0].deposit.state, "UNCOLLECTED");
+  await sales.call("GET", path, undefined, 403);
+  await operations.call("GET", path, undefined, 403);
+  await finance.call("GET", "/orders/deposits?state=INVALID", undefined, 400);
+  const bill = lease.bills.find((b: any) => b.feeType === "DEPOSIT" && b.status !== "VOID");
+  await finance.call("POST", `/incomes/${bill.id}/receipts`, { amount: "300", sourceKey: randomUUID(),
+    receivedOn: "2026-01-01", fundAccountId: account.id, paymentMethod: "BANK", payerName: lease.tenantName }, 201);
+  assert.equal((await finance.call("GET", path)).items[0].deposit.state, "HELD");
+  await admin.call("POST", `/orders/${lease.id}/terminate`, { date: "2026-10-08", revision: (await get()).revision }, 201);
+  assert.equal((await finance.call("GET", path)).items[0].deposit.state, "REFUND_PENDING");
+  const initial = { deductionAmount: "0", items: [], revision: (await get()).revision };
+  await Promise.all([1, 2].map(() => finance.call("POST", `/orders/${lease.id}/deposit-settlement`, initial, 201)));
+  lease = await get();
+  const refundId = lease.deposit.refunds[0].id;
+  const correction = { deductionAmount: "50", revision: lease.revision, items: [{ label: "清洁", amount: "50", note: "退租清洁" }] };
+  await finance.call("POST", `/orders/${lease.id}/deposit-settlement`, correction, 201);
+  await finance.call("POST", `/orders/${lease.id}/deposit-settlement`, correction, 201);
+  lease = await get();
+  assert.equal(lease.deposit.refunds.length, 1); assert.equal(lease.deposit.refunds[0].id, refundId);
+  assert.equal(lease.deposit.refundable, "250.00");
+  const summary = (await finance.call("GET", path)).items[0].deposit;
+  for (const key of ["state", "received", "deduction", "refundable", "refundDue", "refunded", "held"])
+    assert.deepEqual(summary[key], lease.deposit[key]);
+  await finance.call("POST", `/orders/${lease.id}/deposit-settlement`, { ...initial, revision: correction.revision }, 409);
+  const payment = { amount: "250", sourceKey: randomUUID(), paidOn: "2026-10-09", fundAccountId: account.id, paymentMethod: "BANK" };
+  await finance.call("POST", `/expenses/${refundId}/pay`, { ...payment, amount: "100" }, 400);
+  await Promise.all([1, 2].map(() => finance.call("POST", `/expenses/${refundId}/pay`, payment, 201)));
+  lease = await get();
+  assert.equal(lease.deposit.state, "SETTLED"); assert.equal(lease.deposit.refunded, "250.00");
+  assert.equal(lease.actions.reviseDeposit, false);
+  await finance.call("POST", `/orders/${lease.id}/deposit-settlement`, { ...initial, revision: lease.revision }, 400);
+  const closed = await finance.call("GET", path + "&state=SETTLED");
+  assert.equal(closed.total, 1); assert.equal(closed.items[0].deposit.refunded, "250.00");
+  assert.equal((await finance.call("GET", path + "&state=REFUND_PENDING")).total, 0);
+  assert.equal(lease.deposit.refunds[0].paymentRecords.length, 1);
+  assert.equal(lease.deposit.refunds[0].paymentRecords[0].actorName, fi.name);
 });

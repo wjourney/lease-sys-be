@@ -1,3 +1,4 @@
+import { naturallyExpiredRenewable } from "./deposit-summary";
 import { ContractsService, type PreparedContract } from "./contracts.service";
 import { leaseToday } from "../../common/utils/lease-date";
 import { orderInProgress } from "../../common/utils/order-status";
@@ -812,7 +813,11 @@ export class OrderLifecycleService {
     const before = await this.access.get(a, "orders", key);
     if (before.revision !== d.revision)
       throw new ConflictException("订单已更新，请刷新后重新续约");
-    if (!orderInProgress(before.status)) fail("仅进行中的订单可续约");
+    if (
+      !orderInProgress(before.status) &&
+      !naturallyExpiredRenewable(before, leaseToday())
+    )
+      fail("仅进行中或未结算押金的自然到期订单可续约");
     const endsOn = d.endsOn ?? plusMonths(before.endsOn, 12);
     if (endsOn <= before.endsOn) fail("新到期日须晚于原到期日");
     return this.contracts.withChange(
@@ -827,7 +832,34 @@ export class OrderLifecycleService {
             const o = await this.access.get(a, "orders", key, tx);
             if (o.revision !== d.revision)
               throw new ConflictException("订单已更新，请刷新后重新续约");
-            if (!orderInProgress(o.status)) fail("仅进行中的订单可续约");
+            const expired = naturallyExpiredRenewable(o, leaseToday());
+            if (!orderInProgress(o.status) && !expired)
+              fail("仅进行中或未结算押金的自然到期订单可续约");
+            if (
+              expired &&
+              (await tx.expense.count({
+                where: {
+                  orderId: key,
+                  deletedAt: null,
+                  feeType: "DEPOSIT_REFUND",
+                  status: { not: "VOID" },
+                },
+              }))
+            )
+              fail("押金已有退款单，不能原单续约");
+            if (
+              expired &&
+              (await tx.order.count({
+                where: {
+                  unitId: o.unitId,
+                  id: { not: key },
+                  deletedAt: null,
+                  status: { in: ["ACTIVE", "PENDING"] },
+                  occupancyState: { not: "RELEASED" },
+                },
+              }))
+            )
+              fail("该单位已被其他订单占用，不能原单续约");
             if (
               !o.unitId ||
               !o.projectId ||
@@ -836,6 +868,8 @@ export class OrderLifecycleService {
             )
               fail("请先完善租约资料再续约");
             if (endsOn <= o.endsOn) fail("新到期日须晚于原到期日");
+            if (expired && endsOn < leaseToday())
+              fail("续约到期日不能早于今天");
             if (endsOn >= plusMonths(o.startsOn, 600))
               fail("租期最多支持 600 个月");
             const start = dayAfter(o.endsOn);
@@ -844,7 +878,18 @@ export class OrderLifecycleService {
               tx,
               "orders",
               o,
-              { endsOn, nextBillOn: null },
+              {
+                endsOn,
+                nextBillOn: null,
+                ...(expired
+                  ? {
+                      status: "ACTIVE",
+                      occupancyState: "OCCUPIED",
+                      handoverStatus: "PENDING",
+                      handedOverAt: null,
+                    }
+                  : {}),
+              },
               a,
               `续约：原到期日 ${o.endsOn.toISOString().slice(0, 10)}，新到期日 ${endsOn.toISOString().slice(0, 10)}`,
             );
