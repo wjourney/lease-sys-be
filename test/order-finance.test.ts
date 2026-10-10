@@ -908,3 +908,14 @@ test("early termination immediately releases the unit without affecting receipt 
   const next = fixture();
   await assert.rejects(next.lifecycle.terminate(admin, next.order.id, { date: tomorrow.toISOString().slice(0, 10) }), /不能晚于今天/);
 });
+
+test("zero-deposit agreements cannot silently discard a declared deposit receipt", async () => {
+  const f = fixture();
+  f.tables.income.splice(1, 1);
+  const payment = { ...f.payment, paid: true, paymentState: "PAID", rentReceived: "100", depositReceived: "1" };
+  await assert.rejects(f.db.$transaction((tx: any) => f.receipts.initial(tx, operations, { ...f.order, initialPayment: payment })), /首期款项须一次付清/);
+  assert.equal(f.tables.income.length, 1);
+  await f.db.$transaction((tx: any) => f.receipts.initial(tx, operations, { ...f.order, initialPayment: { ...payment, depositReceived: "0" } }));
+  assert.equal(f.tables.income.length, 2);
+  assert.equal(f.tables.income[0].status, "PAID");
+});

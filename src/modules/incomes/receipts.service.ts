@@ -259,10 +259,11 @@ export class ReceiptsService {
       fail("首期款项仅支持未付款或一次付清租金及押金");
     // Validate both bills before inserting either receipt, even if paymentState
     // was omitted by an older client. A paid declaration must cover both in full.
-    for (const bill of bills) {
-      const amount = p[bill.feeType === "DEPOSIT" ? "depositReceived" : "rentReceived"] ?? "0";
-      const sums = await this.balances.totals(tx, bill.id);
-      if (!number(amount).eq(sums.remaining))
+    for (const feeType of ["RENT", "DEPOSIT"]) {
+      const bill = bills.find((b: any) => b.feeType === feeType);
+      const amount = p[feeType === "DEPOSIT" ? "depositReceived" : "rentReceived"] ?? "0";
+      const remaining = bill ? (await this.balances.totals(tx, bill.id)).remaining : number(0);
+      if (!number(amount).eq(remaining))
         fail("首期款项须一次付清租金及押金");
     }
     const group = randomUUID();
