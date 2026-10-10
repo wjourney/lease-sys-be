@@ -14,6 +14,7 @@ export const FinanceQuery = z
     currency: z.enum(["HKD", "CNY", "USD"]).default("HKD"),
     accountId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
+    orderId: z.string().uuid().optional(),
     direction: z.enum(["IN", "OUT"]).optional(),
     kind: z.enum(["RECEIPT", "PAYMENT", "REVERSAL"]).optional(),
     feeType: z.string().max(40).optional(),
@@ -137,6 +138,7 @@ export class FinanceService {
           r.date <= q.to &&
           (!q.accountId || r.accountId === q.accountId) &&
           (!q.projectId || r.projectId === q.projectId) &&
+          (!q.orderId || r.orderId === q.orderId) &&
           (!q.direction || r.direction === q.direction) &&
           (!q.kind || r.kind === q.kind) &&
           (!q.feeType || r.feeType === q.feeType) &&
@@ -179,13 +181,17 @@ export class FinanceService {
     );
     const { q, data, rows, orders } = await this.snapshot(a, input);
     const selectedOrders = data.orders.filter(
-      (o) => o.status !== "DRAFT" &&
+      (o) =>
+        o.status !== "DRAFT" &&
         (!q.projectId || o.projectId === q.projectId) &&
+        (!q.orderId || o.id === q.orderId) &&
         businessDay(o.createdAt) >= q.from &&
         businessDay(o.createdAt) <= q.to,
     );
     const commissions = data.commissions.filter(
-      (c) => !q.projectId || orders.get(c.orderId)?.projectId === q.projectId,
+      (c) =>
+        (!q.projectId || orders.get(c.orderId)?.projectId === q.projectId) &&
+        (!q.orderId || c.orderId === q.orderId),
     );
     const months: string[] = [];
     let month = q.from.slice(0, 7);

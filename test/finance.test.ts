@@ -8,11 +8,13 @@ import {
 } from "../src/modules/finance/finance.service";
 const accountId = "00000000-0000-4000-8000-000000000001";
 const projectId = "00000000-0000-4000-8000-000000000002";
+const orderId = "00000000-0000-4000-8000-000000000003";
+const otherOrderId = "00000000-0000-4000-8000-000000000004";
 const receipt = {
   id: "r",
   recordNo: "RC1",
   recordType: "RECEIPT",
-  orderId: "o",
+  orderId,
   projectId,
   receivedOn: new Date("2026-10-02"),
   amount: "100.01",
@@ -25,7 +27,7 @@ const receipt = {
 const expense = {
   id: "e",
   expenseNo: "E1",
-  orderId: "o",
+  orderId,
   paidOn: new Date("2026-10-03"),
   amount: "60",
   paidAmount: "30",
@@ -120,28 +122,72 @@ const admin = {
   salesCompanyId: null,
   authVersion: 1,
 };
-function service() {
+function service(withOtherOrder = false) {
   const tx: any = {
-    income: { findMany: async () => [receipt] },
-    expense: { findMany: async () => [expense] },
+    income: {
+      findMany: async () => [
+        receipt,
+        ...(withOtherOrder
+          ? [
+              {
+                ...receipt,
+                id: "r-other",
+                orderId: otherOrderId,
+                amount: "500.00",
+              },
+            ]
+          : []),
+      ],
+    },
+    expense: {
+      findMany: async () => [
+        expense,
+        ...(withOtherOrder
+          ? [
+              {
+                ...expense,
+                id: "e-other",
+                orderId: otherOrderId,
+                paidAmount: "200.00",
+                paymentRecords: [],
+                status: "PAID",
+                feeType: "COMMISSION",
+              },
+            ]
+          : []),
+      ],
+    },
     fundAccount: {
       findMany: async () => [{ id: accountId, name: "账户", currency: "HKD" }],
     },
     order: {
       findMany: async () => [
         {
-          id: "o",
+          id: orderId,
           orderNo: "O1",
           projectId,
           createdAt: new Date("2026-09-30T17:00:00Z"),
         },
+        ...(withOtherOrder
+          ? [
+              {
+                id: otherOrderId,
+                orderNo: "O2",
+                projectId,
+                createdAt: new Date("2026-10-03T00:00:00Z"),
+              },
+            ]
+          : []),
       ],
     },
     project: { findMany: async () => [{ id: projectId, name: "项目" }] },
     commission: {
       findMany: async () => [
-        { id: "c", orderId: "o", amount: "33" },
-        { id: "old", orderId: "o", amount: null },
+        { id: "c", orderId, amount: "33" },
+        { id: "old", orderId, amount: null },
+        ...(withOtherOrder
+          ? [{ id: "c-other", orderId: otherOrderId, amount: "1000.00" }]
+          : []),
       ],
     },
   };
@@ -190,5 +236,58 @@ test("non-finance actors cannot read financial aggregates", async () => {
       { ...admin, role: "OPERATIONS" },
       { from: "2026-10-01", to: "2026-10-31" },
     ),
+  );
+});
+
+test("order filter consistently scopes movements, order counts, commissions, charts and totals", async () => {
+  const finance = service(true);
+  const window = { from: "2026-10-01", to: "2026-10-31" };
+  const all = await finance.statistics(admin, window);
+  assert.equal(all.summary.orderCount, 2);
+  assert.equal(all.summary.net, "380.01");
+  assert.equal(all.summary.commissionDue, "1033.00");
+  const scoped = await finance.statistics(admin, { ...window, orderId });
+  const ledger = await finance.ledger(admin, { ...window, orderId });
+  assert.equal(scoped.summary.orderCount, 1);
+  assert.equal(scoped.summary.incoming, "100.01");
+  assert.equal(scoped.summary.outgoing, "20.00");
+  assert.equal(scoped.summary.net, ledger.summary.net);
+  assert.equal(scoped.summary.commissionCount, 2);
+  assert.equal(scoped.summary.commissionDue, "33.00");
+  assert.equal(scoped.summary.unsetCommissionCount, 1);
+  assert.equal(scoped.trend[0].net, "80.01");
+  assert.equal(scoped.trend[0].orderCount, 1);
+  assert.deepEqual(scoped.expenses, [
+    { feeType: "DEPOSIT_REFUND", amount: "20.00" },
+  ]);
+  assert.ok(ledger.items.every((row) => row.orderId === orderId));
+  // Time still limits movements and newly created orders after an order is selected.
+  const later = await finance.statistics(admin, {
+    ...window,
+    from: "2026-10-03",
+    orderId,
+  });
+  assert.equal(later.summary.orderCount, 0);
+  assert.equal(later.summary.incoming, "0.00");
+  assert.equal(later.summary.outgoing, "20.00");
+});
+
+test("unknown order yields empty aggregates; malformed order IDs are rejected", async () => {
+  const result = await service().statistics(admin, {
+    from: "2026-10-01",
+    to: "2026-10-31",
+    orderId: otherOrderId,
+  });
+  assert.equal(result.summary.net, "0.00");
+  assert.equal(result.summary.orderCount, 0);
+  assert.equal(result.summary.commissionCount, 0);
+  assert.deepEqual(result.expenses, []);
+  assert.equal(
+    FinanceQuery.safeParse({
+      from: "2026-10-01",
+      to: "2026-10-31",
+      orderId: "invalid",
+    }).success,
+    false,
   );
 });
