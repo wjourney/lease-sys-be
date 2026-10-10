@@ -35,7 +35,7 @@ export class TasksService implements OnApplicationBootstrap, OnModuleDestroy {
         where: { role: "SUPER_ADMIN", status: "ACTIVE", deletedAt: null },
       });
       if (!actor) return;
-      const system = { ...actor, name: "系统任务" };
+      const system = { ...actor, name: "系统任务", system: true };
       await this.jobs.generateDue(system);
 
       // A crashed renderer leaves a ten-minute lease; make it retryable after restart.

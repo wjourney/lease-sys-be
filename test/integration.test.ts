@@ -1935,3 +1935,42 @@ test("renewal API extends the same order, appends bills once and releases the un
   assert.equal(ended.actions.terminate, false);
   assert.equal(ended.actions.settle, true);
 });
+
+
+test("all operation views resolve renamed and deleted operators without changing audit snapshots", async () => {
+  const phone = `19${randomInt(100_000_000, 1_000_000_000)}`;
+  const created = await admin.call("POST", "/users", { name: "操作人原名", phone, role: "SUPER_ADMIN" }, 201);
+  const member = new Client();
+  await member.login(created.username, created.initialPassword);
+  const company = await member.call("POST", "/sales-companies", { name: "身份回归公司" }, 201);
+  const expense = await member.call("POST", "/expenses", { feeType: "OTHER", amount: "100", payeeName: "测试收款人", dueOn: "2026-10-10" }, 201);
+  await member.call("POST", `/expenses/${expense.id}/pay`, { paidOn: "2026-10-10", fundAccountId: account.id, paymentMethod: "BANK", sourceKey: randomUUID() }, 201);
+  const template = (await admin.call("GET", "/units?pageSize=100")).items.find((u: any) => u.unitTypeCode);
+  const unit = await member.call("POST", "/units", { projectId: template.projectId, unitTypeCode: template.unitTypeCode, roomNo: `身份-${randomUUID().slice(0, 8)}`, minLeaseMonths: 1 }, 201);
+  const order = await member.call("POST", "/orders", { projectId: template.projectId, unitId: unit.id, tenantName: "身份回归租客", startsOn: "2026-10-01", endsOn: "2027-09-30", monthlyRent: "100", depositAmount: "100", depositPlan: "ONE_ONE" }, 201);
+  const before = await admin.call("GET", `/orders/${order.id}`);
+  const original = before.operations.find((log: any) => log.actorId === created.id);
+  assert.equal(original.actorName, "操作人原名");
+  const user = await admin.call("GET", `/users/${created.id}`);
+  await admin.call("PATCH", `/users/${created.id}`, { revision: user.revision, name: "操作人现名" });
+  for (const path of [`/sales-companies/${company.id}`, `/orders/${order.id}`, `/incomes/${order.bills[0].id}`, `/expenses/${expense.id}`]) {
+    const result = await admin.call("GET", path);
+    const own = result.operations.filter((log: any) => log.actorId === created.id);
+    assert.ok(own.length, path);
+    for (const log of own) {
+      assert.equal(log.actorName, "操作人现名", path);
+      assert.equal(log.actorPhone, phone, path);
+      assert.equal(log.actorDeleted, false, path);
+    }
+    if (result.paymentRecords) assert.equal(result.paymentRecords[0].actorName, "操作人现名");
+  }
+  const standalone = await admin.call("GET", `/sales-companies/${company.id}/operations`);
+  assert.equal(standalone[0].actorName, "操作人现名");
+  const after = await admin.call("GET", `/orders/${order.id}`);
+  assert.deepEqual(after.operations.find((log: any) => log.eventId === original.eventId).changes, original.changes);
+  await admin.call("DELETE", `/users/${created.id}`, { reason: "身份回归清理" });
+  const deleted = await admin.call("GET", `/sales-companies/${company.id}`);
+  assert.equal(deleted.operations[0].actorName, "操作人现名");
+  assert.equal(deleted.operations[0].actorPhone, phone);
+  assert.equal(deleted.operations[0].actorDeleted, true);
+});

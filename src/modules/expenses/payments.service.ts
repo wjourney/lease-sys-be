@@ -1,3 +1,4 @@
+import { actorSnapshot } from "../../common/database/operation-actors";
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { AccessService } from "../../common/auth/access.service";
@@ -97,6 +98,7 @@ export class PaymentsService {
               sourceKey,
               amount: paying.toFixed(2),
               operator: a.name,
+              ...actorSnapshot(a),
             },
           ]),
         },

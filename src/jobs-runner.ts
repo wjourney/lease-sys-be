@@ -13,7 +13,7 @@ async function main() {
       where: { role: "SUPER_ADMIN", status: "ACTIVE", deletedAt: null },
     });
     console.log(
-      await app.get(JobsService).generateDue({ ...user, name: "系统任务" }),
+      await app.get(JobsService).generateDue({ ...user, name: "系统任务", system: true }),
     );
   } finally {
     await app.close();

@@ -1,3 +1,4 @@
+import { resolveOperationActors } from "../../common/database/operation-actors";
 import { lock } from "../../common/database/record-mutations";
 import {
   deleteOrderGraph,
@@ -39,11 +40,11 @@ export class OrdersService extends ResourceService {
     return {
       ...record,
       ...data,
-      operations: [
-        ...this.visibleOperations(a, raw),
-        ...relatedOperations,
-      ].sort((a, b) =>
-        String(a.operatedAt).localeCompare(String(b.operatedAt)),
+      operations: await resolveOperationActors(
+        this.db,
+        [...this.visibleOperations(a, raw), ...relatedOperations].sort((a, b) =>
+          String(a.operatedAt).localeCompare(String(b.operatedAt)),
+        ),
       ),
     };
   }

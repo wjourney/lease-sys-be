@@ -1,6 +1,9 @@
 export type Actor = {
   id: string;
   name: string;
+  phone?: string | null;
+  username?: string;
+  system?: boolean;
   role: string;
   salesCompanyId: string | null;
   authVersion: number;

@@ -1,3 +1,4 @@
+import { actorSnapshot } from "./operation-actors";
 import { ConflictException } from "@nestjs/common";
 import { Actor } from "../auth/actor";
 import { delegate, tables } from "../resources/resource-map";
@@ -33,8 +34,7 @@ export function event(
   return {
     eventId: id(),
     action,
-    actorId: actor.id,
-    actorName: actor.name,
+    ...actorSnapshot(actor),
     operatedAt: new Date().toISOString(),
     changes,
     reason: reason ?? "",

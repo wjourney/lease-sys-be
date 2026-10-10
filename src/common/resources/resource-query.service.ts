@@ -1,3 +1,4 @@
+import { resolveOperationActors } from "../database/operation-actors";
 import { orderStatusGroups } from "../utils/order-status";
 import { z } from "zod";
 import { PrismaService } from "../../database/prisma.service";
@@ -238,12 +239,12 @@ export abstract class ResourceQueryService {
     const row = await this.access.get(a, this.resource, key);
     return {
       ...(await this.enrich(a, row)),
-      operations: this.visibleOperations(a, row),
+      operations: await resolveOperationActors(this.db, this.visibleOperations(a, row)),
     };
   }
   async operations(a: Actor, key: string) {
     const row = await this.access.get(a, this.resource, key);
-    return this.visibleOperations(a, row);
+    return resolveOperationActors(this.db, this.visibleOperations(a, row));
   }
   protected visibleOperations(a: Actor, row: any) {
     const r = this.resource;
@@ -254,7 +255,7 @@ export abstract class ResourceQueryService {
       )
     )
       return [];
-    const logs = row.operationLogs as any[];
+    const logs = Array.isArray(row.operationLogs) ? row.operationLogs : [];
     if (!internal(a) && r === "orders")
       return logs.map((entry) => ({
         ...entry,

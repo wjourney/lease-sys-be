@@ -1,3 +1,4 @@
+import { resolveOperationActors } from "../../common/database/operation-actors";
 import { billInvoiceCounts } from "../invoices/bill-invoice-counts";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
@@ -63,7 +64,11 @@ export class IncomesService extends ResourceService {
     fail("应收和收款记录不能删除，请使用来源业务或收款撤回、冲正");
   }
   async detail(a: Actor, key: string) {
-    const result = await super.detail(a, key);
+    const raw = await this.access.get(a, this.resource, key);
+    const result = {
+      ...(await this.enrich(a, raw)),
+      operations: this.visibleOperations(a, raw),
+    };
     if (result.recordType === "RECEIVABLE") {
       const children = await this.db.income.findMany({
         where: { parentId: key, recordType: "RECEIPT", deletedAt: null },
@@ -72,16 +77,19 @@ export class IncomesService extends ResourceService {
       const receipts = await Promise.all(
         children.map((r) => this.enrich(a, r)),
       );
-      const operations = [
-        ...result.operations,
-        ...children.flatMap((r: any) =>
-          this.visibleOperations(a, r).map((log: any) => ({
-            ...log,
-            subject: r.recordNo,
-          })),
-        ),
-      ].sort((a: any, b: any) => b.operatedAt.localeCompare(a.operatedAt));
-      const offsets = result.operations
+      const operations = await resolveOperationActors(
+        this.db,
+        [
+          ...result.operations,
+          ...children.flatMap((r: any) =>
+            this.visibleOperations(a, r).map((log: any) => ({
+              ...log,
+              subject: r.recordNo,
+            })),
+          ),
+        ].sort((a: any, b: any) => b.operatedAt.localeCompare(a.operatedAt)),
+      );
+      const offsets = operations
         .filter(
           (log: any) =>
             log.changes?.depositOffsetAmount &&
@@ -93,6 +101,11 @@ export class IncomesService extends ResourceService {
           id: log.eventId,
           date: log.operatedAt,
           actorName: log.actorName,
+          actorId: log.actorId,
+          actorPhone: log.actorPhone,
+          actorUsername: log.actorUsername,
+          actorType: log.actorType,
+          actorDeleted: log.actorDeleted,
           reason: log.reason,
           amount: number(log.changes.depositOffsetAmount.after)
             .sub(log.changes.depositOffsetAmount.before ?? 0)
@@ -112,6 +125,10 @@ export class IncomesService extends ResourceService {
         invoiceCount: counts.get(key) || 0,
       };
     }
+    result.operations = await resolveOperationActors(
+      this.db,
+      result.operations,
+    );
     if (result.recordType !== "RECEIPT") return result;
     const group = result.recurrenceRule?.receiptGroupId;
     const members = group

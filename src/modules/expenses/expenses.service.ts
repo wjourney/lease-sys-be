@@ -1,3 +1,7 @@
+import {
+  paymentActors,
+  resolveOperationActors,
+} from "../../common/database/operation-actors";
 import { Inject, Injectable } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
 import { Actor } from "../../common/auth/actor";
@@ -50,6 +54,35 @@ export class ExpensesService extends ResourceService {
       ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动产生的支出不能删除");
+  }
+  async detail(a: Actor, key: string) {
+    const raw = await this.access.get(a, this.resource, key);
+    const result = await this.enrich(a, raw);
+    const logs = this.visibleOperations(a, raw);
+    const original =
+      Array.isArray(raw.paymentRecords) && raw.paymentRecords.length
+        ? raw.paymentRecords
+        : result.paymentRecords;
+    const identities = paymentActors(
+      original,
+      logs,
+      !raw.paymentRecords?.length,
+    );
+    const enriched = await resolveOperationActors(this.db, [
+      ...logs,
+      ...identities,
+    ]);
+    return {
+      ...result,
+      operations: enriched.slice(0, logs.length),
+      paymentRecords: result.paymentRecords.map(
+        (record: any, index: number) => ({
+          ...record,
+          ...enriched[logs.length + index],
+          accountName: record.accountName,
+        }),
+      ),
+    };
   }
   async enrich(a: Actor, row: any) {
     const result = await super.enrich(a, row);
