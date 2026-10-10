@@ -143,7 +143,7 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
   assert.equal(result.summary.rental.total, "140.00");
   assert.equal(result.summary.rental.confirmed, "10.00");
   assert.equal(result.items[0].id, "1");
-  assert.equal(result.items[0].canRegister, true);
+  assert.equal(result.items[0].canRegister, false);
   assert.deepEqual(where.AND[0].orderId, { in: ["o"] });
   assert.deepEqual(where.AND[1], { orderId: { in: ["o"] } });
   assert.equal(where.AND[0].currency, "HKD");
@@ -174,7 +174,7 @@ test("receipt registration explains reserved balances without treating them as p
   const partlyReserved = { ...bill, available: "40" };
   assert.equal(
     billRegistration(partlyReserved, { status: "ACTIVE" }).canRegister,
-    true,
+    false,
   );
   assert.match(
     billRegistration(partlyReserved, { status: "CLOSED" })

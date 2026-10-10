@@ -397,8 +397,8 @@ test("initial overpayment rolls back all allocations", async () => {
         initialPayment: {
           ...f.payment,
           paid: true,
-          paymentState: "PARTIAL",
-          rentReceived: "50",
+          paymentState: "PAID",
+          rentReceived: "100",
           depositReceived: "201",
         },
       }),
@@ -421,26 +421,51 @@ test("batch retry is idempotent and rejects a changed allocation set", async () 
     }),
   );
 });
-test("partial receipt directly posts money and keeps the bill OPEN", async () => {
+test("new receipts must settle the full remaining balance, including historical partial bills", async () => {
   const f = fixture();
   const bill = f.tables.income[0];
-  const r = await f.receipts.receipt(operations, bill.id, {
-    ...f.payment,
-    amount: "60",
-  });
-  const sum = await f.balances.totals(f.db, bill.id);
-  assert.equal(sum.available.toString(), "40");
-  assert.equal(sum.remaining.toString(), "40");
-  assert.equal(sum.pending.toString(), "0");
-  assert.equal(r.status, "CONFIRMED");
-  assert.equal(f.tables.income[0].status, "OPEN");
-  await f.receipts.undo(admin, r.id, { reason: "金额错误" }, true);
-  assert.equal(
-    (await f.balances.totals(f.db, bill.id)).remaining.toString(),
-    "100",
-  );
+  await assert.rejects(f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" }), /不支持部分付款/);
+  assert.equal(f.tables.income.length, 2);
+  assert.equal(f.tables.invoice.length, 0);
+  const legacy = await legacyPending(f, bill, "60");
+  await f.receipts.confirm(admin, legacy.id, true);
+  await assert.rejects(f.receipts.receipt(operations, bill.id, { ...f.payment, sourceKey: randomUUID(), amount: "20" }), /不支持部分付款/);
+  const body = { ...f.payment, sourceKey: randomUUID(), amount: "40" };
+  const receipt = await f.receipts.receipt(operations, bill.id, body);
+  const retry = await f.receipts.receipt(operations, bill.id, body);
+  assert.equal(receipt.id, retry.id);
+  assert.equal((await f.balances.totals(f.db, bill.id)).remaining.toString(), "0");
+  assert.equal(f.tables.income[0].status, "PAID");
+  assert.equal(f.tables.invoice.length, 2);
 });
-test("partial and full receipts preserve an active order; retry never duplicates invoice", async () => {
+test("pending historic receipts must be resolved before a new full payment", async () => {
+  const f = fixture();
+  const bill = f.tables.income[0];
+  const legacy = await legacyPending(f, bill, "50");
+  await assert.rejects(f.receipts.receipt(operations, bill.id, { ...f.payment, sourceKey: randomUUID(), amount: "50" }), /待处理/);
+  await f.receipts.confirm(admin, legacy.id, true);
+  await f.receipts.receipt(operations, bill.id, { ...f.payment, sourceKey: randomUUID(), amount: "50" });
+  assert.equal((await f.balances.totals(f.db, bill.id)).remaining.toString(), "0");
+});
+test("a partial allocation rolls back the entire order receipt group", async () => {
+  const f = fixture();
+  const body = f.batch();
+  body.allocations[1].amount = "100";
+  await assert.rejects(f.receipts.batch(operations, f.order.id, body), /不支持部分付款/);
+  assert.equal(f.tables.income.length, 2);
+  assert.equal(f.tables.invoice.length, 0);
+});
+for (const [rentReceived, depositReceived, paymentState] of [
+  ["50", "200", "PAID"], ["100", "0", "PAID"], ["100", "100", undefined], ["100", "200", "PARTIAL"],
+]) test(`initial payment rejects incomplete or partial declaration ${rentReceived}/${depositReceived}/${paymentState}`, async () => {
+  const f = fixture();
+  await assert.rejects(f.db.$transaction((tx: any) => f.receipts.initial(tx, operations, {
+    ...f.order, initialPayment: { ...f.payment, paid: true, rentReceived, depositReceived, paymentState },
+  })), /首期款项/);
+  assert.equal(f.tables.income.length, 2);
+  assert.equal(f.tables.invoice.length, 0);
+});
+test("full receipts preserve an active order; retry never duplicates invoice", async () => {
   const f = fixture();
   await f.receipts.receipt(operations, f.tables.income[0].id, {
     ...f.payment,
@@ -596,7 +621,8 @@ for (const status of ["PENDING", "ACTIVE"]) test(`partial payment does not block
   const f = fixture();
   f.tables.order[0].status = status;
   const bill = f.tables.income[0];
-  await f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" });
+  const legacy = await legacyPending(f, bill, "60");
+  await f.receipts.confirm(admin, legacy.id, true);
   assert.equal(f.tables.order[0].status, status);
   await assert.rejects(f.lifecycle.close(admin, f.order.id), /已有收款/);
   const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-10-08", reason: "租客提前退租" });
@@ -747,7 +773,8 @@ test("cancelling a partially paid lease before its start issues a rent refund wi
   const f = fixture();
   const bill = f.tables.income[0];
   Object.assign(bill, { periodStart: new Date("2026-10-01"), periodEnd: new Date("2026-10-31") });
-  await f.receipts.receipt(operations, bill.id, { ...f.payment, amount: "60" });
+  const legacy = await legacyPending(f, bill, "60");
+  await f.receipts.confirm(admin, legacy.id, true);
   const ended = await f.lifecycle.terminate(admin, f.order.id, { date: "2026-09-28", reason: "起租前取消" });
   assert.equal(ended.status, "COMPLETED");
   assert.equal(f.tables.expense[0].feeType, "RENT_REFUND");
@@ -761,7 +788,8 @@ test("renewal defaults to one year after the old expiry and preserves paid histo
   f.order.nextBillOn = null;
   const billing = new RentBillingService(f.db, f.access);
   await billing.fullTerm(f.db, f.order, admin);
-  await f.receipts.receipt(operations, f.tables.income[0].id, { ...f.payment, amount: "60" });
+  const legacy = await legacyPending(f, f.tables.income[0], "60");
+  await f.receipts.confirm(admin, legacy.id, true);
   const before = JSON.parse(JSON.stringify(f.tables));
   const revision = f.tables.order[0].revision;
   const saved = await f.lifecycle.renew(admin, f.order.id, { revision });

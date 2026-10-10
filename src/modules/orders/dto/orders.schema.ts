@@ -40,7 +40,7 @@ export const OrdersSchema = z.object({
   moveInOn: date.nullish(),
   initialPayment: z
     .object({
-      paymentState: z.enum(["UNPAID", "PARTIAL", "PAID"]).optional(),
+      paymentState: z.enum(["UNPAID", "PAID"]).optional(),
       paid: z.boolean(),
       rentPaid: z.boolean(),
       depositPaid: z.boolean(),

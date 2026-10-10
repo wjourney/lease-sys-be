@@ -420,13 +420,14 @@ test("full workflow and authorization invariants", async (t) => {
     "receipt immediately settles balance and duplicate key is idempotent",
     async () => {
       const body = {
-        amount: "1000",
+        amount: String(root.amount),
         receivedOn: "2026-09-29",
         fundAccountId: account.id,
         paymentMethod: "BANK",
         payerName: order.tenantName,
         sourceKey: randomUUID(),
       };
+      await operations.call("POST", "/incomes/" + root.id + "/receipts", { ...body, amount: "1" }, 400);
       receipt = await operations.call(
         "POST",
         "/incomes/" + root.id + "/receipts",
@@ -442,7 +443,7 @@ test("full workflow and authorization invariants", async (t) => {
       assert.equal(same.id, receipt.id);
       const detail = await sales.call("GET", "/incomes/" + root.id);
       assert.equal(Number(detail.pending), 0);
-      assert.equal(Number(detail.confirmed), 1000);
+      assert.equal(Number(detail.confirmed), Number(root.amount));
       await sales.call("POST", "/incomes/" + receipt.id + "/confirm", {}, 403);
     },
   );
@@ -453,9 +454,9 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(invs.total, 1);
     invoice = invs.items[0];
     const detail = await finance.call("GET", "/incomes/" + root.id);
-    assert.equal(Number(detail.confirmed), 1000);
+    assert.equal(Number(detail.confirmed), Number(root.amount));
     assert.equal(Number(detail.pending), 0);
-    assert.equal(detail.status, "OPEN");
+    assert.equal(detail.status, "PAID");
     await other.call("GET", "/invoices/" + invoice.id, undefined, 404);
   });
   await t.test(
@@ -485,9 +486,11 @@ test("full workflow and authorization invariants", async (t) => {
   await t.test(
     "concurrent receipts cannot exceed available balance",
     async () => {
-      const d = await sales.call("GET", "/incomes/" + root.id);
+      const raceBill = (await sales.call("GET", "/orders/" + order.id)).bills.find((bill: any) => bill.feeType === "RENT" && bill.id !== root.id && bill.status === "OPEN");
+      assert.ok(raceBill);
+      const d = await sales.call("GET", "/incomes/" + raceBill.id);
       const send = async () => {
-        const r = await fetch(base + "/incomes/" + root.id + "/receipts", {
+        const r = await fetch(base + "/incomes/" + raceBill.id + "/receipts", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -514,7 +517,7 @@ test("full workflow and authorization invariants", async (t) => {
         { reason: "凭证需重新提交" },
         201,
       );
-      const next = await sales.call("GET", "/incomes/" + root.id);
+      const next = await sales.call("GET", "/incomes/" + raceBill.id);
       assert.equal(next.available, d.available);
     },
   );
@@ -1077,12 +1080,12 @@ test("full workflow and authorization invariants", async (t) => {
       },
       moveInOn: "2026-11-01",
       initialPayment: {
-        paymentState: "PARTIAL",
+        paymentState: "PAID",
         paid: true,
         rentPaid: true,
-        depositPaid: false,
+        depositPaid: true,
         rentReceived: "5800",
-        depositReceived: "0",
+        depositReceived: "11600",
         dueOn: "2026-10-28",
         receivedOn: "2026-10-28",
         fundAccountId: account.id,
@@ -1103,6 +1106,9 @@ test("full workflow and authorization invariants", async (t) => {
       ...body,
       commission: { ...body.commission, amount: "-1" },
     }, 400);
+    for (const change of [{ paymentState: "PARTIAL" }, { rentReceived: "1" }, { depositReceived: "0", depositPaid: false }, { paymentState: undefined, rentReceived: "100" }]) {
+      await admin.call("POST", "/orders", { ...body, initialPayment: { ...body.initialPayment, ...change } }, 400);
+    }
     const created = await admin.call("POST", "/orders", body, 201);
     assert.ok(created.currentContractMaterialId);
     assert.equal(created.contractGenerationPending, false);
@@ -1125,7 +1131,7 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.actions.editLease,false);
     assert.equal(detail.occupancyState,"OCCUPIED");
     const initialReceipts=detail.bills.flatMap((b:any)=>b.receipts);
-    assert.equal(initialReceipts.length,1);
+    assert.equal(initialReceipts.length,2);
     for(const r of initialReceipts) await finance.call("POST",`/incomes/${r.id}/reverse`,{reason:"金额需重新登记"},201);
     detail=await admin.call("GET",`/orders/${created.id}`);
     assert.equal(detail.actions.editLease,true);
@@ -1134,7 +1140,7 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.depositPlan, "TWO_ONE");
     assert.equal(detail.moveInOn.slice(0, 10), "2026-11-01");
     assert.equal(detail.initialPayment.rentReceived, "5800");
-    assert.equal(detail.initialPayment.paymentState, "PARTIAL");
+    assert.equal(detail.initialPayment.paymentState, "PAID");
     assert.equal(Number(detail.orderCommission.amount), 200);
     assert.equal(detail.orderCommission.mode, "RECURRING_MONTHLY");
     assert.equal(detail.orderCommission.periodStart.slice(0, 10), "2026-11-01");

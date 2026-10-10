@@ -69,8 +69,12 @@ export class ReceiptsService {
     if (order?.depositSettledAt && root.feeType === "DEPOSIT")
       fail("押金已结算，不能继续登记收款");
     const sums = await this.balances.totals(tx, root.id);
+    if (sums.pending.gt(0))
+      fail("已有收款记录待处理，请先核对后再一次付清");
     if (number(d.amount).lte(0) || number(d.amount).gt(sums.available))
       fail("金额超过可登记余额");
+    if (!number(d.amount).eq(sums.remaining))
+      fail("不支持部分付款，请一次付清账单剩余金额");
     await this.accounts.checkAccount(tx, d.fundAccountId, root.currency);
     const child = await insert(
       tx,
@@ -251,6 +255,16 @@ export class ReceiptsService {
         },
       },
     });
+    if (p.paymentState === "PARTIAL")
+      fail("首期款项仅支持未付款或一次付清租金及押金");
+    // Validate both bills before inserting either receipt, even if paymentState
+    // was omitted by an older client. A paid declaration must cover both in full.
+    for (const bill of bills) {
+      const amount = p[bill.feeType === "DEPOSIT" ? "depositReceived" : "rentReceived"] ?? "0";
+      const sums = await this.balances.totals(tx, bill.id);
+      if (!number(amount).eq(sums.remaining))
+        fail("首期款项须一次付清租金及押金");
+    }
     const group = randomUUID();
     let voucherIncomeId: string | undefined;
     for (const bill of bills) {

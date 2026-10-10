@@ -53,6 +53,8 @@ function fixture(rentReceived = "15000.00") {
     {
       totals: async (_: any, id: string) => ({
         available: number(bills.find((bill) => bill.id === id)!.amount),
+        remaining: number(bills.find((bill) => bill.id === id)!.amount),
+        pending: number(0),
       }),
     } as any,
     { checkAccount: async () => undefined } as any,
@@ -62,17 +64,10 @@ function fixture(rentReceived = "15000.00") {
   return { actor, order, receipts, tx, service };
 }
 
-test("paid declaration allows actual initial receipts below the calculated bill", async () => {
+test("paid declaration rejects initial receipts below the calculated bill", async () => {
   const f = fixture();
-  await f.service.initial(f.tx, f.actor, f.order);
-  assert.deepEqual(
-    f.receipts.map((r) => [r.parentId, r.amount, r.status]),
-    [
-      ["rent", "15000.00", "CONFIRMED"],
-      ["deposit", "15000.00", "CONFIRMED"],
-    ],
-  );
-  assert.equal(f.order.status, "PENDING");
+  await assert.rejects(f.service.initial(f.tx, f.actor, f.order), /首期款项须一次付清/);
+  assert.equal(f.receipts.length, 0);
 });
 
 test("exact initial payment still registers normally", async () => {
@@ -86,7 +81,7 @@ test("initial registration still rejects an amount above the available balance",
   const f = fixture("15017.00");
   await assert.rejects(
     f.service.initial(f.tx, f.actor, f.order),
-    /金额超过可登记余额/,
+    /首期款项须一次付清/,
   );
   assert.equal(f.receipts.length, 0);
 });
