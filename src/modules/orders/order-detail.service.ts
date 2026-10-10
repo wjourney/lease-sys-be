@@ -247,9 +247,7 @@ export class OrderDetailService {
                   ? "UNSET"
                   : paid.eq(c.amount)
                     ? "PAID"
-                    : paid.gt(0)
-                      ? "PARTIAL"
-                      : "OPEN",
+                    : "OPEN",
             remainingAmount:
               c.amount == null ? null : number(c.amount).sub(paid).toFixed(2),
             availableAmount:

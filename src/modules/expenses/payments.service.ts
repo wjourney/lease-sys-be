@@ -39,21 +39,35 @@ export class PaymentsService {
         await lock(tx, "orders", first.orderId);
       await lock(tx, "expenses", key);
       const e = await this.access.get(a, "expenses", key, tx);
-      const records = Array.isArray(e.paymentRecords)
-        ? (e.paymentRecords as any[])
-        : [];
+      const records =
+        Array.isArray(e.paymentRecords) && e.paymentRecords.length
+          ? (e.paymentRecords as any[])
+          : number(e.paidAmount).gt(0)
+            ? [
+                {
+                  amount: number(e.paidAmount).toFixed(2),
+                  paidOn: e.paidOn,
+                  fundAccountId: e.fundAccountId,
+                  paymentMethod: e.paymentMethod,
+                  bankReference: e.bankReference,
+                },
+              ]
+            : [];
       const duplicate =
         d.sourceKey && records.find((x) => x.sourceKey === d.sourceKey);
       if (duplicate) {
-        if ((d.amount !== undefined && !number(duplicate.amount).eq(d.amount)) ||
-          duplicate.fundAccountId !== d.fundAccountId || duplicate.paymentMethod !== d.paymentMethod ||
+        if (
+          (d.amount !== undefined && !number(duplicate.amount).eq(d.amount)) ||
+          duplicate.fundAccountId !== d.fundAccountId ||
+          duplicate.paymentMethod !== d.paymentMethod ||
           new Date(duplicate.paidOn).getTime() !== d.paidOn.getTime() ||
-          (duplicate.bankReference || "") !== (d.bankReference || ""))
+          (duplicate.bankReference || "") !== (d.bankReference || "")
+        )
           fail("重复提交编号冲突");
         return e;
       }
       if (e.status === "PAID") {
-        if (d.amount !== undefined) fail("退款已付清");
+        if (d.amount !== undefined) fail("该支出已付清");
         return e;
       }
       if (e.status !== "UNPAID") fail("该支出不可付款");
@@ -64,11 +78,9 @@ export class PaymentsService {
       const remaining = number(e.amount).sub(e.paidAmount);
       const paying = amount === undefined ? remaining : number(amount);
       if (paying.lte(0) || paying.gt(remaining)) fail("付款金额超过待付余额");
-      if (
-        amount !== undefined &&
-        (e.feeType !== "DEPOSIT_REFUND" || !sourceKey)
-      )
-        fail("分次退款需要有效的提交编号");
+      if (!paying.eq(remaining)) fail("不支持部分付款，请一次付清支出剩余金额");
+      if (amount !== undefined && !sourceKey)
+        fail("登记付款需要有效的提交编号");
       const paidAmount = number(e.paidAmount).add(paying);
       return update(
         tx,
@@ -77,7 +89,7 @@ export class PaymentsService {
         {
           ...payment,
           paidAmount,
-          status: paidAmount.eq(e.amount) ? "PAID" : "UNPAID",
+          status: "PAID",
           paymentRecords: plain([
             ...records,
             {

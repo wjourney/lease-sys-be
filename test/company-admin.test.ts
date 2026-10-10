@@ -198,7 +198,7 @@ test("quarter statistics sum individual installments, exclude void, count distin
     ["100.10", "100.10", "0.00"],
   );
   assert.equal(result.staff[0].months["2026-02"], "100.10");
-  assert.equal(result.items[0].status, "PARTIAL");
+  assert.equal(result.items[0].status, "OPEN");
 });
 
 test("company commission details reject foreign IDs, reject client-selected companies and unauthorized roles", async () => {

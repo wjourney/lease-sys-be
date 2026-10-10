@@ -559,7 +559,7 @@ test("full workflow and authorization invariants", async (t) => {
     );
   });
   await t.test(
-    "commission payments do not duplicate and cannot exceed balance",
+    "commission payments must settle the full balance and never duplicate",
     async () => {
       commission = (
         await finance.call("GET", "/commissions?orderId=" + order.id)
@@ -572,12 +572,14 @@ test("full workflow and authorization invariants", async (t) => {
         );
       }
       const body = {
-        amount: "600",
+        amount: "1200",
         paidOn: "2026-09-29",
         fundAccountId: account.id,
         paymentMethod: "BANK",
         sourceKey: randomUUID(),
       };
+      await finance.call("POST", "/commissions/" + commission.id + "/payments",
+        { ...body, amount: "600", sourceKey: randomUUID() }, 400);
       const e = await finance.call(
         "POST",
         "/commissions/" + commission.id + "/payments",
@@ -600,7 +602,7 @@ test("full workflow and authorization invariants", async (t) => {
           (await finance.call("GET", "/commissions/" + commission.id))
             .paidAmount,
         ),
-        600,
+        1200,
       );
       await finance.call(
         "POST",
@@ -610,6 +612,22 @@ test("full workflow and authorization invariants", async (t) => {
       );
     },
   );
+  await t.test("ordinary expense payments reject partial amounts and concurrent double payment", async () => {
+    const expense = await finance.call("POST", "/expenses", {
+      feeType: "OTHER", amount: "80.01", payeeName: "付款规则回归", dueOn: "2026-10-10",
+    }, 201);
+    const pay = { amount: "80.01", sourceKey: randomUUID(), paidOn: "2026-10-10", fundAccountId: account.id, paymentMethod: "BANK" };
+    await finance.call("POST", `/expenses/${expense.id}/pay`, { ...pay, amount: "40" }, 400);
+    const responses = await Promise.all([0, 1].map(() => fetch(base + `/expenses/${expense.id}/pay`, {
+      method: "POST", headers: { "Content-Type": "application/json", Cookie: finance.cookies, "X-CSRF-Token": finance.csrf },
+      body: JSON.stringify({ ...pay, sourceKey: randomUUID() }),
+    })));
+    assert.deepEqual(responses.map((r) => r.status).sort(), [201, 400]);
+    const paid = await finance.call("GET", `/expenses/${expense.id}`);
+    assert.equal(Number(paid.paidAmount), 80.01);
+    assert.equal(paid.status, "PAID");
+    assert.equal(paid.paymentRecords.length, 1);
+  });
   await t.test(
     "invoice reissue preserves receipt and unique active invoice",
     async () => {
@@ -1523,7 +1541,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
 
   }
   await t.test(
-    "rent edits preserve deposit bills; offsets and partial refunds keep one ledger",
+    "rent edits preserve deposit bills; offsets and full refunds keep one ledger",
     async () => {
       let o = await create();
       const oldContract = o.currentContractMaterialId;
@@ -1648,35 +1666,28 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
       assert.equal(salesDetail.actions.refund, false);
       const refund = o.deposit.refunds[0];
       const pay = {
-        amount: "400",
+        amount: "900",
         sourceKey: randomUUID(),
         paidOn: "2026-09-16",
         fundAccountId: account.id,
         paymentMethod: "BANK",
       };
+      await finance.call("POST", `/expenses/${refund.id}/pay`,
+        { ...pay, amount: "400", sourceKey: randomUUID() }, 400);
+      o = await detail(o.id);
+      assert.equal(Number(o.deposit.refunded), 0);
+      assert.equal(Number(o.deposit.refundDue), 900);
       await finance.call("POST", `/expenses/${refund.id}/pay`, pay, 201);
       await finance.call("POST", `/expenses/${refund.id}/pay`, pay, 201);
       o = await detail(o.id);
-      assert.equal(Number(o.deposit.refunded), 400);
-      assert.equal(Number(o.deposit.refundDue), 500);
-      assert.equal(o.deposit.refunds[0].paymentRecords.length, 1);
-      await finance.call(
-        "POST",
-        `/expenses/${refund.id}/pay`,
-        { ...pay, sourceKey: randomUUID(), amount: "501" },
-        400,
-      );
-      await finance.call(
-        "POST",
-        `/expenses/${refund.id}/pay`,
-        { ...pay, sourceKey: randomUUID(), amount: "500" },
-        201,
-      );
-      o = await detail(o.id);
+      assert.equal(Number(o.deposit.refunded), 900);
+      assert.equal(Number(o.deposit.refundDue), 0);
       assert.equal(o.deposit.state, "SETTLED");
       assert.equal(Number(o.deposit.held), 0);
       assert.equal(o.deposit.refunds[0].status, "PAID");
-      assert.equal(o.deposit.refunds[0].paymentRecords.length, 2);
+      assert.equal(o.deposit.refunds[0].paymentRecords.length, 1);
+      await finance.call("POST", `/expenses/${refund.id}/pay`,
+        { ...pay, amount: "900", sourceKey: randomUUID() }, 400);
       assert.ok(o.operations.some((x: any) => x.reason === "抵扣水电欠费"));
       const commission = o.commissions.find((c: any) => c.status !== "VOID");
       assert.ok(commission);

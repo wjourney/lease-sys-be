@@ -162,9 +162,7 @@ export class CompanyCommissionsService {
                   ? "UNSET"
                   : remaining.lte(0)
                     ? "PAID"
-                    : paid.gt(0)
-                      ? "PARTIAL"
-                      : "OPEN",
+                    : "OPEN",
             ...(id
               ? {
                   remark: c.remark,
@@ -195,7 +193,7 @@ export class CompanyCommissionsService {
     const rows = items.filter(
       (r) =>
         (q.status === "ALL" ||
-          (q.status ? r.status === q.status : r.status !== "VOID")) &&
+          (q.status ? r.status === (q.status === "PARTIAL" ? "OPEN" : q.status) : r.status !== "VOID")) &&
         (!q.q ||
           `${r.commissionNo} ${r.orderNo} ${r.salesName}`
             .toLowerCase()

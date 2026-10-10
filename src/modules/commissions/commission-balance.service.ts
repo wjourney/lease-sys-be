@@ -22,6 +22,12 @@ export class CommissionBalanceService {
     });
     const committed = es.reduce((n, x) => n.add(x.amount), number(0));
     if (committed.add(additional).gt(c.amount!)) fail("金额超过佣金可支付余额");
+    if (additional.gt(0)) {
+      if (es.some((e) => e.status === "UNPAID"))
+        fail("佣金已有待付支出，请在支出管理中付清");
+      if (!committed.add(additional).eq(c.amount!))
+        fail("不支持部分付款，请一次付清佣金剩余金额");
+    }
     return c;
   }
 }
