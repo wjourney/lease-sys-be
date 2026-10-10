@@ -1216,6 +1216,19 @@ test("full workflow and authorization invariants", async (t) => {
     assert.notEqual(updatedContract.id, created.currentContractMaterialId);
     const refreshed = await admin.call("GET", `/orders/${created.id}`);
     assert.equal(refreshed.currentContractMaterialId, updatedContract.id);
+    const versions = refreshed.materials.filter((m: any) => m.category === "CONTRACT");
+    assert.equal(versions.filter((m: any) => m.isCurrent).length, 1);
+    const previous = versions.find((m: any) => m.id === created.currentContractMaterialId);
+    assert.equal(previous.status, "VOID");
+    assert.ok(previous.voidedAt);
+    assert.equal(previous.voidReason, "核对租客资料");
+    const historical = await fetch(base + `/materials/${previous.id}/download?download=1`, { headers: { Cookie: admin.cookies } });
+    assert.equal(historical.status, 200);
+    assert.match(decodeURIComponent(historical.headers.get("content-disposition") || ""), /已作废/);
+    assert.equal(Buffer.from(await historical.arrayBuffer()).subarray(0, 4).toString(), "%PDF");
+    const repeat = await admin.call("PATCH", `/orders/${created.id}`, { revision: refreshed.revision, tenantPhone: refreshed.tenantPhone });
+    assert.equal(repeat.currentContractMaterialId, updatedContract.id);
+    assert.equal(repeat.materials.filter((m: any) => m.category === "CONTRACT").length, versions.length);
   });
   await t.test("monthly commission creates installments and edits with the lease", async () => {
     const template = await admin.call("GET", `/units/${order.unitId}`);

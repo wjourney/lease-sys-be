@@ -34,6 +34,9 @@ export class OrderDetailService {
         materials: await Promise.all(
           materials.map(async (m) => ({
             ...(await this.access.output(a, "materials", m)),
+            ...(m.category === "CONTRACT" && !m.isCurrent
+              ? { status: "VOID" }
+              : {}),
             originalName: m.originalName
               ? normalizeUploadName(m.originalName)
               : null,
@@ -173,14 +176,22 @@ export class OrderDetailService {
             AND: [
               {
                 deletedAt: null,
-                isCurrent: true,
                 OR: [
-                  { orderId: order.id },
+                  {
+                    orderId: order.id,
+                    OR: [{ category: "CONTRACT" }, { isCurrent: true }],
+                  },
                   {
                     incomeId: { in: [...roots, ...receipts].map((x) => x.id) },
+                    isCurrent: true,
                   },
                   ...(rights.read.includes("expenses")
-                    ? [{ expenseId: { in: expenses.map((x) => x.id) } }]
+                    ? [
+                        {
+                          expenseId: { in: expenses.map((x) => x.id) },
+                          isCurrent: true,
+                        },
+                      ]
                     : []),
                 ],
               },
@@ -299,6 +310,9 @@ export class OrderDetailService {
       materials: await Promise.all(
         materials.map(async (m) => ({
           ...(await this.access.output(a, "materials", m)),
+          ...(m.category === "CONTRACT" && !m.isCurrent
+            ? { status: "VOID" }
+            : {}),
           originalName: m.originalName
             ? normalizeUploadName(m.originalName)
             : null,
@@ -319,6 +333,7 @@ export class OrderDetailService {
       relatedOperations: [
         ...roots,
         ...receipts,
+        ...materials.filter((m) => m.category === "CONTRACT"),
         ...(rights.read.includes("expenses") ? expenses : []),
         ...(rights.read.includes("commissions") || rights.manageOrders
           ? commissions
@@ -326,7 +341,11 @@ export class OrderDetailService {
       ].flatMap((r: any) =>
         (r.operationLogs ?? []).map((log: any) => ({
           ...log,
-          subject: r.recordNo || r.expenseNo || r.commissionNo,
+          subject:
+            r.recordNo ||
+            r.expenseNo ||
+            r.commissionNo ||
+            (r.category === "CONTRACT" ? `合同 V${r.versionNo}` : undefined),
         })),
       ),
     };

@@ -77,20 +77,7 @@ export class OrdersController {
     @Body() body: any,
   ) {
     await this.lifecycle.renew(r.actor, key, body);
-    let contractGenerationPending = false;
-    try {
-      await this.contracts.ensure(r.actor, key);
-    } catch (error) {
-      contractGenerationPending = true;
-      this.logger.warn(
-        `Order ${key} renewed; contract generation needs retry`,
-        error,
-      );
-    }
-    return {
-      ...(await this.service.detail(r.actor, key)),
-      contractGenerationPending,
-    };
+    return this.service.detail(r.actor, key);
   }
   @Post(":id/terminate") terminate(
     @Req() r: any,
@@ -172,15 +159,7 @@ export class OrdersController {
     @Param("id") id: string,
     @Body() body: any,
   ) {
-    const saved = await this.service.edit(r.actor, id, body);
-    try {
-      if (saved?.status !== "DRAFT") await this.contracts.ensure(r.actor, id);
-    } catch (error) {
-      this.logger.warn(
-        `Order ${id} saved; contract generation needs retry`,
-        error,
-      );
-    }
+    await this.service.edit(r.actor, id, body);
     return this.service.detail(r.actor, id);
   }
   @Get(":id/deletion-preview") deletionPreview(

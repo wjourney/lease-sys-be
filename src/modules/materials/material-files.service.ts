@@ -38,7 +38,11 @@ export class MaterialFilesService {
           tx,
           "materials",
           data,
-          { ...stored, originalName: normalizeUploadName(file.originalname), mimeType: detected },
+          {
+            ...stored,
+            originalName: normalizeUploadName(file.originalname),
+            mimeType: detected,
+          },
           a,
           "上传文件",
         ),
@@ -58,7 +62,10 @@ export class MaterialFilesService {
     return {
       storageProvider: m.storageProvider,
       storageKey: m.storageKey,
-      name: normalizeUploadName(m.originalName ?? m.title),
+      name:
+        m.category === "CONTRACT"
+          ? `${m.title} V${m.versionNo}${m.isCurrent && m.status === "ACTIVE" ? "" : " 已作废"}.pdf`
+          : normalizeUploadName(m.originalName ?? m.title),
       type: m.mimeType ?? "application/octet-stream",
     };
   }

@@ -1,3 +1,4 @@
+import { ContractsService, orderContractSnapshot } from "../src/modules/orders/contracts.service";
 import "reflect-metadata";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -294,6 +295,7 @@ function fixture() {
     access,
     new RentBillingService(db, access),
     receipts,
+    { withChange: async (_before: any, _next: any, save: any) => save(null), activate: async (_tx: any, _actor: any, order: any) => order } as any,
   );
   const order = {
     id: randomUUID(),
@@ -918,4 +920,116 @@ test("zero-deposit agreements cannot silently discard a declared deposit receipt
   await f.db.$transaction((tx: any) => f.receipts.initial(tx, operations, { ...f.order, initialPayment: { ...payment, depositReceived: "0" } }));
   assert.equal(f.tables.income.length, 2);
   assert.equal(f.tables.income[0].status, "PAID");
+});
+
+
+function versionedFixture() {
+  const f = editableFixture();
+  Object.assign(f.order, { orderNo: "R-test", tenantType: "PERSON", depositPlan: "OTHER" });
+  const old = {
+    id: randomUUID(), orderId: f.order.id, category: "CONTRACT", revision: 1,
+    materialGroupId: randomUUID(), versionNo: 1, isCurrent: true, status: "ACTIVE",
+    storageKey: "old.pdf", deletedAt: null, operationLogs: [],
+    contractSnapshot: { documentVersion: 3, orderDetails: orderContractSnapshot(f.order) },
+  };
+  f.order.currentContractMaterialId = old.id;
+  f.tables.material.push(old);
+  const state = { renders: 0, discarded: [] as any[], failRender: false };
+  const contracts = new ContractsService(f.db, f.access, {
+    save: async () => ({ storageProvider: "LOCAL", storageKey: "new.pdf", sizeBytes: 5, checksum: "test" }),
+    discard: async (file: any) => { state.discarded.push(file); },
+  } as any, {
+    pdf: async () => { state.renders++; if (state.failRender) throw new Error("PDF unavailable"); return Buffer.from("%PDF"); },
+  } as any);
+  (f.lifecycle as any).contracts = contracts;
+  return { ...f, contracts, old, state };
+}
+
+test("contact edits atomically replace the contract, retain paid bills and record supersession", async () => {
+  const f = versionedFixture();
+  await f.receipts.batch(admin, f.order.id, f.batch());
+  const ledger = structuredClone(f.tables.income);
+  const saved = await f.lifecycle.editOrder(admin, f.order.id, { revision: f.order.revision, tenantPhone: "19912345678", reason: "更新联系电话" });
+  assert.deepEqual(f.tables.income, ledger);
+  const old = f.tables.material.find(m => m.id === f.old.id);
+  const current = f.tables.material.find(m => m.id === saved.currentContractMaterialId);
+  assert.equal(old.status, "VOID"); assert.equal(old.isCurrent, false);
+  assert.ok(old.voidedAt instanceof Date); assert.equal(old.voidReason, "更新联系电话");
+  assert.equal(old.operationLogs.at(-1).actorId, admin.id);
+  assert.equal(current.versionNo, 2); assert.equal(current.materialGroupId, old.materialGroupId);
+  assert.equal(current.status, "ACTIVE"); assert.equal(current.isCurrent, true);
+  assert.equal(current.contractSnapshot.orderDetails.tenantPhone, "19912345678");
+  assert.equal((await f.contracts.ensure(admin, f.order.id)).id, current.id);
+  assert.equal(f.state.renders, 1);
+});
+
+test("unchanged contract values including decimal formatting create no version", async () => {
+  const f = versionedFixture();
+  await f.lifecycle.editOrder(admin, f.order.id, { revision: 1, monthlyRent: "100.00" });
+  assert.equal(f.state.renders, 0); assert.equal(f.tables.material.length, 1);
+  assert.equal(f.tables.order[0].currentContractMaterialId, f.old.id);
+});
+
+test("failed contract rendering prevents both rent edit and renewal from saving", async () => {
+  for (const operation of ["edit", "renew"]) {
+    const f = versionedFixture(); f.state.failRender = true;
+    const before = structuredClone(f.tables);
+    await assert.rejects(operation === "edit"
+      ? f.lifecycle.editOrder(admin, f.order.id, { revision: 1, monthlyRent: "120" })
+      : f.lifecycle.renew(admin, f.order.id, { revision: 1 }), /合同生成失败，订单未保存/);
+    assert.deepEqual(f.tables, before);
+  }
+});
+
+test("a contract activation failure rolls back rent bills or renewal and discards the generated file", async () => {
+  for (const operation of ["edit", "renew"]) {
+    const f = versionedFixture(); const before = structuredClone(f.tables);
+    f.db.material.create = async () => { throw new Error("contract insert failed"); };
+    await assert.rejects(operation === "edit"
+      ? f.lifecycle.editOrder(admin, f.order.id, { revision: 1, monthlyRent: "120" })
+      : f.lifecycle.renew(admin, f.order.id, { revision: 1 }), /contract insert failed/);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.state.discarded.length, 1);
+  }
+});
+
+test("renewal versions the contract and leaves existing paid ledger untouched", async () => {
+  const f = versionedFixture();
+  await f.receipts.batch(admin, f.order.id, f.batch());
+  const history = structuredClone(f.tables.income);
+  const saved = await f.lifecycle.renew(admin, f.order.id, { revision: f.order.revision });
+  assert.equal(saved.endsOn.toISOString().slice(0, 10), "2028-09-30");
+  assert.deepEqual(f.tables.income.filter(r => history.some(h => h.id === r.id)), history);
+  assert.equal(f.tables.material.filter(m => m.isCurrent).length, 1);
+  assert.equal(f.tables.material.find(m => m.id === saved.currentContractMaterialId).versionNo, 2);
+  assert.equal(f.old.status, "VOID");
+});
+
+test("a stale edit revision cannot render or supersede a contract", async () => {
+  const f = versionedFixture();
+  await assert.rejects(f.lifecycle.editOrder(admin, f.order.id, { revision: 99, tenantPhone: "changed" }), /订单已更新/);
+  assert.equal(f.state.renders, 0); assert.equal(f.old.status, "ACTIVE");
+});
+
+test("contract fingerprint includes deposit plan and proration settings", () => {
+  const f = versionedFixture();
+  const original = orderContractSnapshot(f.order);
+  for (const changes of [{ depositPlan: "TWO_ONE" }, { firstPeriodProration: false }, { lastPeriodProration: false }])
+    assert.notDeepEqual(orderContractSnapshot({ ...f.order, ...changes }), original);
+});
+
+test("an order changed during rendering keeps its original contract and discards the stale PDF", async () => {
+  const f = versionedFixture();
+  f.contracts.pdfRenderer.pdf = async () => {
+    f.tables.order[0].revision++;
+    return Buffer.from("%PDF");
+  };
+  const ledger = structuredClone(f.tables.income);
+  await assert.rejects(f.lifecycle.editOrder(admin, f.order.id, { revision: 1, monthlyRent: "120" }), /订单已更新/);
+  assert.deepEqual(f.tables.income, ledger);
+  assert.equal(f.tables.order[0].monthlyRent, "100");
+  assert.equal(f.tables.order[0].currentContractMaterialId, f.old.id);
+  assert.equal(f.tables.material.length, 1);
+  assert.equal(f.tables.material[0].status, "ACTIVE");
+  assert.equal(f.state.discarded.length, 1);
 });

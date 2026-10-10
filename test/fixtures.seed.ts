@@ -210,6 +210,7 @@ async function main() {
     new Access(db),
     new RentBillingService(db, new Access(db)),
     new ReceiptsService(db, new Access(db), new IncomeBalanceService(db, new Access(db)), new AccountValidationService(db, new Access(db))),
+    {} as any,
   );
   for (let n = 0; n < 3; n++) {
     const o = await b.createOrder(a, {
