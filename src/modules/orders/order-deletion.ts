@@ -13,7 +13,7 @@ export async function orderDeletionGraph(tx: any, orderId: string) {
   return { incomes, commissions, expenses, invoices, materials, blocked };
 }
 export function deletionSummary(graph: Awaited<ReturnType<typeof orderDeletionGraph>>) {
-  return { allowed: !graph.blocked, reason: graph.blocked ? "已有实际收付款或押金抵扣，请先完成退款、撤销或冲正，不能直接删除订单及资金记录" : "",
+  return { allowed: !graph.blocked, reason: graph.blocked ? "已有实际收付款或押金抵扣，请先处理关联资金记录，不能直接删除订单及资金记录" : "",
     bills: graph.incomes.filter((r: any) => r.recordType === "RECEIVABLE").length,
     receipts: graph.incomes.filter((r: any) => r.recordType === "RECEIPT").length,
     commissions: graph.commissions.length, expenses: graph.expenses.length,

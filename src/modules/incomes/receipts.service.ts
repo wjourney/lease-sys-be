@@ -293,13 +293,12 @@ export class ReceiptsService {
       voucherIncomeId ??= r.id;
     }
   }
-  async undo(a: Actor, key: string, body: any, reverse = false) {
+  async undo(a: Actor, key: string, body: any) {
     const { reason } = z
       .object({ reason: z.string().trim().min(1).max(500) })
       .strict()
       .parse(body);
     demand(!["SALES_COMPANY_ADMIN", "SALES"].includes(a.role));
-    if (reverse) demand(financial(a));
     return this.db.$transaction(async (tx) => {
       const first = await this.access.get(a, "incomes", key, tx);
       if (first.recordType !== "RECEIPT" || !first.parentId)
@@ -312,60 +311,18 @@ export class ReceiptsService {
       await lock(tx, "incomes", key);
       parent = await tx.income.findUnique({ where: { id: first.parentId } });
       const r = await this.access.get(a, "incomes", key, tx);
-      const target = reverse ? "REVERSED" : "WITHDRAWN";
-      if (!reverse) demand(financial(a) || r.createdBy === a.id);
-      if (r.status === target) return r;
-      if (r.status !== (reverse ? "CONFIRMED" : "PENDING"))
-        fail("收款状态已变化，请刷新后重试");
-      if (
-        reverse &&
-        (await tx.expense.count({
-          where: {
-            originalIncomeId: key,
-            deletedAt: null,
-            status: { not: "VOID" },
-          },
-        }))
-      )
-        fail("该收款已有退款关联，不能冲正");
-      if (reverse && parent?.orderId) {
-        const o = await tx.order.findUnique({ where: { id: parent.orderId } });
-        const expenses = await tx.expense.count({
-          where: {
-            orderId: parent.orderId,
-            deletedAt: null,
-            status: { not: "VOID" },
-          },
-        });
-        if (
-          o?.depositSettledAt ||
-          expenses ||
-          number(parent.depositOffsetAmount).gt(0)
-        )
-          fail("已有结算、抵扣或付款单，请先处理关联业务，不能冲正收款");
-      }
+      demand(financial(a) || r.createdBy === a.id);
+      if (r.status === "WITHDRAWN") return r;
+      if (r.status !== "PENDING")
+        fail("仅待确认收款可撤回，已到账收款不能撤回");
       const result = await update(
         tx,
         "incomes",
         r,
-        { status: target, rejectionReason: reason },
+        { status: "WITHDRAWN", rejectionReason: reason },
         a,
-        reverse ? `收款冲正：${reason}` : `撤回登记：${reason}`,
+        `撤回登记：${reason}`,
       );
-      if (reverse) {
-        const invoices = await tx.invoice.findMany({
-          where: { incomeId: key, status: "ACTIVE", deletedAt: null },
-        });
-        for (const inv of invoices)
-          await update(
-            tx,
-            "invoices",
-            inv,
-            { status: "VOID", voidReason: reason },
-            a,
-            "收款冲正，作废收据",
-          );
-      }
       await this.refresh(tx, a, parent);
       return result;
     });

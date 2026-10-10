@@ -516,40 +516,29 @@ test("withdrawal requires creator or finance, then releases pending reservation"
     "100",
   );
 });
-test("reversal preserves receipt and voids invoice; does not release occupied unit", async () => {
+test("confirmed receipts cannot be withdrawn and retain invoices and balances", async () => {
   const f = fixture();
   const result = await f.receipts.batch(operations, f.order.id, f.batch());
-  for (const r of result.receipts) await f.receipts.confirm(admin, r.id, true);
   f.tables.order[0].occupancyState = "OCCUPIED";
-  await assert.rejects(
-    f.receipts.undo(operations, result.id, { reason: "错账" }, true),
-  );
-  await f.receipts.undo(admin, result.id, { reason: "错账" }, true);
+  for (const actor of [operations, admin])
+    await assert.rejects(
+      f.receipts.undo(actor, result.id, { reason: "wrong" }),
+      /已到账收款不能撤回/,
+    );
   assert.equal(
     f.tables.income.find((r) => r.id === result.id).status,
-    "REVERSED",
+    "CONFIRMED",
   );
   assert.equal(
     f.tables.invoice.find((r) => r.incomeId === result.id).status,
-    "VOID",
+    "ACTIVE",
+  );
+  assert.equal(
+    (await f.balances.totals(f.db, f.tables.income[0].id)).available.toString(),
+    "0",
   );
   assert.equal(f.tables.order[0].occupancyState, "OCCUPIED");
   assert.equal(f.tables.order[0].status, "ACTIVE");
-});
-test("settlement or downstream payment blocks reversal", async () => {
-  const f = fixture();
-  const r = await f.receipts.receipt(operations, f.tables.income[0].id, {
-    ...f.payment,
-    amount: "100",
-  });
-  await f.receipts.confirm(admin, r.id, true);
-  f.tables.expense.push({
-    id: randomUUID(),
-    orderId: f.order.id,
-    status: "UNPAID",
-  });
-  await assert.rejects(f.receipts.undo(admin, r.id, { reason: "wrong" }, true));
-  assert.equal(f.tables.income.find((x) => x.id === r.id).status, "CONFIRMED");
 });
 test("all rejected receipts unlock lease editing and cancellation despite historical registration", async () => {
   const f = fixture();

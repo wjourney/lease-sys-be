@@ -61,7 +61,7 @@ export class IncomesService extends ResourceService {
     return fail("请通过订单新增费用，不能直接新增应收");
   }
   protected async beforeRemove() {
-    fail("应收和收款记录不能删除，请使用来源业务或收款撤回、冲正");
+    fail("应收和收款记录不能删除，请通过来源业务处理，已到账收款不能删除");
   }
   async detail(a: Actor, key: string) {
     const raw = await this.access.get(a, this.resource, key);

@@ -55,13 +55,6 @@ export class IncomesController {
   ) {
     return this.receiptsService.undo(r.actor, key, d);
   }
-  @Post(":id/reverse") reverse(
-    @Req() r: any,
-    @Param("id") key: string,
-    @Body() d: any,
-  ) {
-    return this.receiptsService.undo(r.actor, key, d, true);
-  }
   @Get() list(@Req() r: any, @Query() q: any) {
     return this.service.list(r.actor, q);
   }
