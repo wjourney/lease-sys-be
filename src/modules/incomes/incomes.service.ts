@@ -132,17 +132,10 @@ export class IncomesService extends ResourceService {
     if (result.recordType !== "RECEIPT") return result;
     const group = result.recurrenceRule?.receiptGroupId;
     const members = group
-      ? await this.db.income.findMany({
-          where: {
-            orderId: result.orderId,
-            recordType: "RECEIPT",
-            deletedAt: null,
-            sourceKey: {
-              startsWith: `${result.sourceKey.startsWith("initial:") ? "initial" : "payment"}:${group}:`,
-            },
-          },
-          select: { id: true },
-        })
+      ? (await this.db.income.findMany({
+          where: { orderId: result.orderId, recordType: "RECEIPT", deletedAt: null },
+          select: { id: true, recurrenceRule: true },
+        })).filter((receipt: any) => receipt.recurrenceRule?.receiptGroupId === group)
       : [{ id: key }];
     const vouchers = await this.db.material.findMany({
       where: {

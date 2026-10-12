@@ -124,7 +124,7 @@ export function contractHtml(
   </style></head><body>
     <header><div class="brand">SUPREME BAY<small>租赁管理系统</small></div><div class="draft">待签署草稿 · 请双方核对</div></header>
     <h1>物业租赁合同</h1><p class="subtitle">订单编号 ${esc(order.orderNo)} · 生成日期 ${date(new Date())}</p>
-    <p class="notice">本文件根据系统录入资料自动生成。空白及“签署前填写 / 确认”事项须由双方补充核对；未签署前仅作合同草稿。</p>
+    <p class="notice">本文件根据系统录入资料自动生成。空白及“签署前填写 / 确认”事项须由双方补充核对；未签署前仅作合同草稿。${order.rentEffectiveOn ? `本次月租调整适用于自 ${date(order.rentEffectiveOn)} 起尚未付款的账期；已结清账单沿用原约定。` : ""}</p>
     <div class="section"><div class="section-title">一、签约方资料</div><div class="parties">
       <div class="party"><strong>出租方（甲方）</strong>${row("名称", lessorName)}${row("证件／登记", lessorNumber)}${row("联系人", lessorContact)}${row("联系电话", lessorPhone)}</div>
       <div class="party"><strong>承租方（乙方） · ${order.tenantType === "COMPANY" ? "公司" : "个人"}</strong>${row("名称", order.tenantName)}${row("证件／登记", order.tenantRegistrationNo)}${row("联系人", order.tenantContactName || (order.tenantType === "PERSON" ? order.tenantName : undefined))}${row("联系电话", order.tenantPhone)}${row("电子邮箱", order.tenantEmail)}</div>

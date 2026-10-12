@@ -21,6 +21,7 @@ export function orderContractSnapshot(o: any) {
     startsOn: o.startsOn,
     endsOn: o.endsOn,
     monthlyRent: number(o.monthlyRent).toString(),
+    rentEffectiveOn: o.rentEffectiveOn || null,
     depositAmount: number(o.depositAmount).toString(),
     depositPlan: o.depositPlan || null,
     firstPeriodProration: Boolean(o.firstPeriodProration),

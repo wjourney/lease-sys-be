@@ -13,7 +13,7 @@ export class RentBillingService {
     @Inject(AccessService) readonly access: AccessService,
   ) {}
   async fullTerm(tx: any, order: any, actor: Actor, preserveHistory = false) {
-    const existing = preserveHistory ? await tx.income.findMany({ where: { orderId: order.id, recordType: "RECEIVABLE", feeType: "RENT" } }) : [];
+    const existing = preserveHistory ? await tx.income.findMany({ where: { orderId: order.id, recordType: "RECEIVABLE", feeType: "RENT", deletedAt: null, status: { not: "VOID" } } }) : [];
     let cursor = order.startsOn;
     for (let index = 0; cursor <= order.endsOn; index++) {
       if (index >= 600) fail("租期最多支持 600 个月");

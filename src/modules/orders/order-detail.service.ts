@@ -218,8 +218,8 @@ export class OrderDetailService {
         : firstConfirmed.gt(0)
           ? "PARTIAL"
           : "UNPAID";
-    const hasPayments = receipts.some((x) =>
-      ["PENDING", "CONFIRMED"].includes(x.status),
+    const hasPendingRentReceipt = receipts.some((x) =>
+      x.feeType === "RENT" && x.status === "PENDING",
     );
     const materials = rights.read.includes("materials")
       ? await this.db.material.findMany({
@@ -299,6 +299,7 @@ export class OrderDetailService {
           ]);
           return {
             ...(await this.access.output(a, "commissions", c)),
+            editable: c.status !== "VOID" && related.length === 0,
             companyName: company?.name,
             salesName: sales?.name,
             paidAmount: paid.toFixed(2),
@@ -340,10 +341,19 @@ export class OrderDetailService {
       ),
       actions: {
         edit: rights.write.includes("orders") && order.status !== "CLOSED",
-        editLease:
+        editLease: false,
+        editRent:
           rights.write.includes("orders") &&
           orderInProgress(order.status) &&
-          !hasPayments,
+          !hasPendingRentReceipt &&
+          bills.some((bill) =>
+            bill.feeType === "RENT" &&
+            bill.status !== "VOID" &&
+            !bill.receipts.some((receipt: any) =>
+              ["PENDING", "CONFIRMED"].includes(receipt.status),
+            ) &&
+            number(bill.offset).eq(0),
+          ),
         close: false,
         moveIn: false,
         renew:

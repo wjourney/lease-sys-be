@@ -320,7 +320,15 @@ test("full workflow and authorization invariants", async (t) => {
         },
         403,
       );
-      const secondAdmin = await operations.call(
+      await operations.call("POST", "/users", {
+        name: "越权管理员", phone: `13${randomInt(100_000_000, 1_000_000_000)}`,
+        role: "SUPER_ADMIN", status: "ACTIVE",
+      }, 400);
+      await operations.call("POST", "/users", {
+        name: "越权财务", phone: `13${randomInt(100_000_000, 1_000_000_000)}`,
+        role: "FINANCE", status: "ACTIVE",
+      }, 400);
+      const secondAdmin = await admin.call(
         "POST",
         "/users",
         {
@@ -331,14 +339,20 @@ test("full workflow and authorization invariants", async (t) => {
         },
         201,
       );
-      const disabledAdmin = await operations.call(
+      await operations.call("POST", `/users/${secondAdmin.id}/disable`, { reason: "越权停用" }, 400);
+      await operations.call("POST", `/users/${secondAdmin.id}/reset-password`, {}, 400);
+      const latestMember = await operations.call("GET", `/users/${created.id}`);
+      await operations.call("PATCH", `/users/${created.id}`, {
+        revision: latestMember.revision, role: "SUPER_ADMIN",
+      }, 400);
+      const disabledAdmin = await admin.call(
         "POST",
         `/users/${secondAdmin.id}/disable`,
         { reason: "测试停用其他管理员" },
         201,
       );
       assert.equal(disabledAdmin.status, "DISABLED");
-      const enabledAdmin = await operations.call(
+      const enabledAdmin = await admin.call(
         "PATCH",
         `/users/${secondAdmin.id}`,
         {
@@ -347,7 +361,7 @@ test("full workflow and authorization invariants", async (t) => {
           reason: "测试重新启用其他管理员",
         },
       );
-      const patchedAdmin = await operations.call(
+      const patchedAdmin = await admin.call(
         "PATCH",
         `/users/${secondAdmin.id}`,
         {
@@ -357,7 +371,7 @@ test("full workflow and authorization invariants", async (t) => {
         },
       );
       assert.equal(patchedAdmin.status, "DISABLED");
-      await operations.call(
+      await admin.call(
         "DELETE",
         `/users/${secondAdmin.id}`,
         { reason: "测试删除其他管理员" },
@@ -603,6 +617,14 @@ test("full workflow and authorization invariants", async (t) => {
       );
       const detail = await finance.call("GET", "/expenses/" + e.id);
       const relatedOrder = await finance.call("GET", "/orders/" + order.id);
+      await admin.call("PATCH", `/orders/${order.id}`, {
+        revision: relatedOrder.revision,
+        commission: {
+          mode: commission.mode,
+          dueOn: commission.dueOn.slice(0, 10),
+          amount: "1300",
+        },
+      }, 400);
       const relatedProject = await finance.call("GET", "/projects/" + relatedOrder.projectId);
       assert.equal(detail.projectId, relatedOrder.projectId);
       assert.equal(detail.projectName, relatedProject.name);
@@ -1161,6 +1183,42 @@ test("full workflow and authorization invariants", async (t) => {
     assert.equal(detail.occupancyState,"OCCUPIED");
     const initialReceipts=detail.bills.flatMap((b:any)=>b.receipts);
     assert.equal(initialReceipts.length,2);
+    const voucher = new FormData();
+    voucher.append("payload", JSON.stringify({
+      incomeId: initialReceipts[0].voucherIncomeId,
+      category: "VOUCHER", visibility: "SHARED", title: "首期付款凭证",
+    }));
+    voucher.append("file", new Blob(["%PDF-1.4\n%%EOF"], { type: "application/pdf" }), "voucher.pdf");
+    const uploadedVoucher = await fetch(base + "/materials/upload", {
+      method: "POST", headers: { Cookie: admin.cookies, "X-CSRF-Token": admin.csrf }, body: voucher,
+    });
+    const voucherResponse = await uploadedVoucher.text();
+    assert.equal(uploadedVoucher.status, 201, voucherResponse);
+    const voucherRow = JSON.parse(voucherResponse);
+    for (const initialReceipt of initialReceipts) {
+      const receiptDetail = await admin.call("GET", `/incomes/${initialReceipt.id}`);
+      assert(receiptDetail.vouchers.some((item: any) => item.id === voucherRow.id));
+    }
+    const paidRent = detail.bills.find((bill: any) => bill.feeType === "RENT" && bill.receipts.length);
+    const depositBill = detail.bills.find((bill: any) => bill.feeType === "DEPOSIT" && bill.status !== "VOID");
+    await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision, startsOn: "2026-12-01",
+    }, 400);
+    await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision, salesUserId: order.salesUserId,
+    }, 400);
+    detail = await admin.call("PATCH", `/orders/${created.id}`, {
+      revision: detail.revision, monthlyRent: "6100", reason: "调整未收账期月租",
+      commission: { ...body.commission, amount: "250" },
+    });
+    assert.equal(detail.bills.find((bill: any) => bill.id === paidRent.id).amount, paidRent.amount);
+    assert.equal(detail.bills.find((bill: any) => bill.id === depositBill.id).amount, depositBill.amount);
+    assert.equal(Number(detail.orderCommission.amount), 250);
+    assert.equal(detail.depositPlan, "OTHER");
+    assert.equal(detail.rentEffectiveOn.slice(0, 10), "2026-12-01");
+    assert(detail.bills.some((bill: any) => bill.feeType === "RENT" && bill.status !== "VOID" && bill.periodStart.slice(0, 10) === "2026-12-01" && Number(bill.amount) === 6100));
+    assert(detail.bills.some((bill: any) => bill.feeType === "RENT" && bill.status === "VOID" && Number(bill.amount) === 5800));
+    assert.notEqual(detail.currentContractMaterialId, created.currentContractMaterialId);
     for (const r of initialReceipts) {
       await finance.call("POST", `/incomes/${r.id}/reverse`, { reason: "unsupported action" }, 404);
       await finance.call("POST", `/incomes/${r.id}/withdraw`, { reason: "unsupported action" }, 400);
@@ -1177,7 +1235,8 @@ test("full workflow and authorization invariants", async (t) => {
       initialPayment: { paymentState: "UNPAID", paid: false, rentPaid: false, depositPaid: false, rentReceived: "0", depositReceived: "0", dueOn: "2026-10-28" },
     }, 201);
     detail = await admin.call("GET", `/orders/${created.id}`);
-    assert.equal(detail.actions.editLease,true);
+    assert.equal(detail.actions.editLease,false);
+    assert.equal(detail.actions.editRent,true);
     assert.equal(detail.actions.close,false);
     assert.equal(detail.registrationNoType, "BR");
     assert.equal(detail.depositPlan, "TWO_ONE");
@@ -1200,25 +1259,14 @@ test("full workflow and authorization invariants", async (t) => {
       registrationNoType: null,
       tenantRegistrationNo: "",
       tenantContactName: "",
-      depositPlan: null,
-      moveInOn: null,
-      initialPayment: {
-        paymentState: "UNPAID",
-        paid: false,
-        rentPaid: false,
-        depositPaid: false,
-        rentReceived: "0",
-        depositReceived: "0",
-        dueOn: "2026-10-28",
-      },
       commission: { ...body.commission, amount: "250" },
     });
     assert.equal(edited.tenantType, "PERSON");
     assert.equal(edited.tenantName, "新租客");
     assert.equal(edited.registrationNoType, null);
     assert.equal(edited.tenantRegistrationNo, "");
-    assert.equal(edited.depositPlan, null);
-    assert.equal(edited.moveInOn, null);
+    assert.equal(edited.depositPlan, "TWO_ONE");
+    assert.equal(edited.moveInOn.slice(0, 10), "2026-11-01");
     assert.equal(edited.initialPayment.paymentState, "UNPAID");
     assert.equal(edited.initialPayment.depositReceived, "0");
     assert.equal(Number(edited.orderCommission.amount), 250);
@@ -1288,16 +1336,10 @@ test("full workflow and authorization invariants", async (t) => {
       "2026-11-05", "2026-12-05", "2027-01-05",
     ]);
     assert(installments.every((c: any) => c.mode === "RECURRING_MONTHLY" && Number(c.amount) === 100));
-    created = await admin.call("PATCH", `/orders/${created.id}`, {
+    created = await admin.call("POST", `/orders/${created.id}/renew`, {
       revision: detail.revision,
-      reason: "延长租期",
       endsOn: "2027-02-28",
-      commission: {
-        mode: "RECURRING_MONTHLY",
-        dueOn: "2026-11-05",
-        amount: "100",
-      },
-    });
+    }, 201);
     detail = await admin.call("GET", `/orders/${created.id}`);
     installments = detail.commissions.filter((c: any) => c.status !== "VOID");
     assert.equal(installments.length, 4);
@@ -1752,12 +1794,7 @@ test("order detail, bill synchronization and deposit lifecycle", async (t) => {
   await t.test(
     "zero deposit activation ignores voided old deposit; no refund expense",
     async () => {
-      let o = await create("500");
-      o = await admin.call("PATCH", `/orders/${o.id}`, {
-        revision: o.revision,
-        reason: "免押金",
-        depositAmount: "0",
-      });
+      let o = await create("0");
       const rent = o.bills.find(
         (b: any) => b.feeType === "RENT" && b.status !== "VOID",
       );

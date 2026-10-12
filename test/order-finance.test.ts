@@ -63,9 +63,6 @@ test("commission-only edit preserves rent/deposit IDs, states, revisions and nex
     reason: "佣金调整",
     commission: commissionInput,
     monthlyRent: "100.00",
-    depositAmount: "200.00",
-    startsOn: "2026-10-01",
-    endsOn: "2027-09-30",
   });
   assert.deepEqual(f.tables.income, before);
   assert.equal(f.tables.commission.length, 1);
@@ -87,17 +84,18 @@ test("contact edit and unchanged commission do not mutate any financial record",
   assert.deepEqual(f.tables.income, before);
   assert.equal(f.tables.commission[0].revision, 1);
 });
-test("deposit-only change leaves rent bill intact", async () => {
+test("deposit and lease dates cannot be changed through ordinary order editing", async () => {
   const f = editableFixture();
-  const rent = structuredClone(f.tables.income[0]);
-  await f.lifecycle.editOrder(admin, f.order.id, {
+  const before = structuredClone(f.tables.income);
+  await assert.rejects(f.lifecycle.editOrder(admin, f.order.id, {
     revision: 1,
     reason: "押金调整",
     depositAmount: "300",
-  });
-  assert.deepEqual(f.tables.income[0], rent);
-  assert.equal(f.tables.income[1].status, "VOID");
-  assert.equal(f.tables.income[2].amount, "300");
+  }), /不能通过普通订单编辑修改/);
+  await assert.rejects(f.lifecycle.editOrder(admin, f.order.id, {
+    revision: 1, endsOn: "2027-10-31",
+  }), /不能通过普通订单编辑修改/);
+  assert.deepEqual(f.tables.income, before);
 });
 test("commission mode switch preserves void history and never revives it on switch back", async () => {
   const f = editableFixture();
@@ -552,7 +550,7 @@ test("all rejected receipts unlock lease editing and cancellation despite histor
     await f.receipts.confirm(admin, r.id, false, "重录");
   const details = new OrderDetailService(f.db, f.access, {} as any);
   const related = await details.related(admin, f.tables.order[0]);
-  assert.equal(related.actions.editLease, true);
+  assert.equal(related.actions.editLease, false);
   assert.equal(related.actions.close, false);
   assert.equal(related.actions.moveIn, false);
   assert.equal(related.actions.renew, true);

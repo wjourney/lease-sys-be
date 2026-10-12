@@ -33,13 +33,28 @@ export class UsersService extends ResourceService {
   private initialPassword() {
     return `Sb${randomBytes(9).toString("base64url")}`;
   }
+  private assertCanManage(a: Actor, role: string) {
+    if (a.role === "OPERATIONS" && ["SUPER_ADMIN", "FINANCE"].includes(role))
+      fail("内部运营不能管理管理员或财务账号");
+  }
+  private async assertAnotherActiveAdmin(tx: any, row: any) {
+    if (row.role !== "SUPER_ADMIN" || row.status !== "ACTIVE") return;
+    // Lock the active admin set so two concurrent requests cannot each remove
+    // the other administrator after observing the same count.
+    const admins: { id: string }[] = await tx.$queryRawUnsafe(
+      "SELECT id FROM `users` WHERE role = 'SUPER_ADMIN' AND status = 'ACTIVE' AND deletedAt IS NULL ORDER BY id FOR UPDATE",
+    );
+    if (admins.length <= 1) fail("至少保留一位启用的超级管理员");
+  }
   private assertCanDisable(a: Actor, row: any) {
     demand(["SUPER_ADMIN", "OPERATIONS"].includes(a.role), "无权停用账号");
+    this.assertCanManage(a, row.role);
     if (row.id === a.id) fail("不能停用自己的账号");
   }
   async uploadAvatar(a: Actor, key: string, file?: Express.Multer.File) {
     if (key !== a.id) this.access.allow(a, this.resource, true);
-    await this.access.get(a, this.resource, key);
+    const target = await this.access.get(a, this.resource, key);
+    this.assertCanManage(a, target.role);
     if (!file) return fail("请选择小于 2MB 的头像图片");
     if (!file.buffer || file.size > 2 * 1024 * 1024)
       return fail("请选择小于 2MB 的头像图片");
@@ -60,6 +75,7 @@ export class UsersService extends ResourceService {
       result = await this.db.$transaction(async (tx) => {
         await lock(tx, this.resource, key);
         const current = await this.access.get(a, this.resource, key, tx);
+        this.assertCanManage(a, current.role);
         const row = await update(
           tx,
           this.resource,
@@ -138,6 +154,7 @@ export class UsersService extends ResourceService {
     await this.db.$transaction(async (tx) => {
       await lock(tx, this.resource, key);
       const row = await this.access.get(a, this.resource, key, tx);
+      this.assertCanManage(a, row.role);
       if (row.id === a.id) fail("请通过个人中心修改自己的密码");
       await update(
         tx,
@@ -164,6 +181,7 @@ export class UsersService extends ResourceService {
       const current = await this.access.get(a, this.resource, key, tx);
       this.assertCanDisable(a, current);
       if (current.status === "DISABLED") fail("账号已停用");
+      await this.assertAnotherActiveAdmin(tx, current);
       return update(
         tx,
         this.resource,
@@ -179,6 +197,14 @@ export class UsersService extends ResourceService {
     return this.enrich(a, row);
   }
   protected async validate(a: Actor, data: any, tx: any, row?: any) {
+    if (row) this.assertCanManage(a, row.role);
+    this.assertCanManage(a, data.role ?? row?.role);
+    if (
+      row &&
+      ((data.role !== undefined && data.role !== row.role) ||
+        (data.status === "DISABLED" && row.status === "ACTIVE"))
+    )
+      await this.assertAnotherActiveAdmin(tx, row);
     if (row && data.username !== undefined && data.username !== row.username)
       fail("登录账号不能在资料编辑中修改");
     if (
@@ -239,6 +265,8 @@ export class UsersService extends ResourceService {
       fail("不能停用自己或修改自己的角色");
   }
   protected async beforeRemove(a: Actor, tx: any, row: any) {
+    this.assertCanManage(a, row.role);
     if (row.id === a.id) fail("不能删除自己的账号");
+    await this.assertAnotherActiveAdmin(tx, row);
   }
 }

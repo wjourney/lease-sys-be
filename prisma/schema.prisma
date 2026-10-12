@@ -159,6 +159,7 @@ model Order {
   startsOn                  DateTime  @db.Date
   endsOn                    DateTime  @db.Date
   monthlyRent               Decimal?  @db.Decimal(18, 2)
+  rentEffectiveOn            DateTime? @db.Date
   depositAmount             Decimal?  @db.Decimal(18, 2)
   depositPlan               String?
   moveInOn                  DateTime? @db.Date
