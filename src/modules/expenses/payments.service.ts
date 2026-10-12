@@ -28,7 +28,7 @@ export class PaymentsService {
         sourceKey: z.string().uuid().optional(),
         paidOn: date,
         fundAccountId: z.string().uuid(),
-        paymentMethod: z.string().min(1),
+        paymentMethod: z.enum(["BANK", "CASH", "CHEQUE"]),
         bankReference: z.string().optional(),
       })
       .strict()

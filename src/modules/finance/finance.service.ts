@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { Actor, financial } from "../../common/auth/actor";
 import { demand } from "../../common/utils/errors";
 import { number } from "../../common/utils/value";
@@ -37,84 +38,91 @@ export class FinanceService {
     demand(financial(a));
     const q = FinanceQuery.parse(input);
     // One consistent read snapshot: paging and totals always refer to the same set of money movements.
-    const data = await this.db.$transaction(async (tx) => {
-      const [receipts, expenses, accounts, orders, projects, commissions] =
-        await Promise.all([
-          tx.income.findMany({
-            where: {
-              OR: [{ deletedAt: null }, { status: "REVERSED" }],
-              recordType: "RECEIPT",
-              currency: q.currency,
-              status: { in: ["CONFIRMED", "REVERSED"] },
-            },
-            select: {
-              id: true,
-              recordNo: true,
-              orderId: true,
-              projectId: true,
-              receivedOn: true,
-              amount: true,
-              currency: true,
-              feeType: true,
-              fundAccountId: true,
-              payerName: true,
-              bankReference: true,
-              status: true,
-              operationLogs: true,
-              updatedAt: true,
-            },
-          }),
-          tx.expense.findMany({
-            where: {
-              deletedAt: null,
-              currency: q.currency,
-              paidAmount: { gt: 0 },
-              status: { not: "VOID" },
-            },
-            select: {
-              id: true,
-              expenseNo: true,
-              orderId: true,
-              projectId: true,
-              commissionId: true,
-              paidOn: true,
-              amount: true,
-              paidAmount: true,
-              paymentRecords: true,
-              currency: true,
-              feeType: true,
-              fundAccountId: true,
-              payeeName: true,
-              bankReference: true,
-              status: true,
-            },
-          }),
-          tx.fundAccount.findMany({
-            select: { id: true, name: true, currency: true },
-          }),
-          tx.order.findMany({
-            where: { deletedAt: null },
-            select: {
-              id: true,
-              orderNo: true,
-              status: true,
-              projectId: true,
-              createdAt: true,
-            },
-          }),
-          tx.project.findMany({ select: { id: true, name: true } }),
-          tx.commission.findMany({
-            where: {
-              deletedAt: null,
-              status: { not: "VOID" },
-              currency: q.currency,
-              dueOn: { gte: new Date(q.from), lte: new Date(q.to) },
-            },
-            select: { id: true, orderId: true, amount: true },
-          }),
-        ]);
-      return { receipts, expenses, accounts, orders, projects, commissions };
-    });
+    const data = await this.db.$transaction(
+      async (tx) => {
+        const [receipts, expenses, accounts, orders, projects, commissions] =
+          await Promise.all([
+            tx.income.findMany({
+              where: {
+                OR: [{ deletedAt: null }, { status: "REVERSED" }],
+                ...(q.orderId ? { orderId: q.orderId } : {}),
+                recordType: "RECEIPT",
+                currency: q.currency,
+                status: { in: ["CONFIRMED", "REVERSED"] },
+              },
+              select: {
+                id: true,
+                recordNo: true,
+                orderId: true,
+                projectId: true,
+                receivedOn: true,
+                amount: true,
+                currency: true,
+                feeType: true,
+                fundAccountId: true,
+                payerName: true,
+                bankReference: true,
+                status: true,
+                operationLogs: true,
+                updatedAt: true,
+              },
+            }),
+            tx.expense.findMany({
+              where: {
+                deletedAt: null,
+                currency: q.currency,
+                ...(q.orderId ? { orderId: q.orderId } : {}),
+                paidAmount: { gt: 0 },
+                status: { not: "VOID" },
+              },
+              select: {
+                id: true,
+                expenseNo: true,
+                orderId: true,
+                projectId: true,
+                commissionId: true,
+                paidOn: true,
+                amount: true,
+                paidAmount: true,
+                paymentRecords: true,
+                currency: true,
+                feeType: true,
+                fundAccountId: true,
+                payeeName: true,
+                bankReference: true,
+                status: true,
+              },
+            }),
+            tx.fundAccount.findMany({
+              select: { id: true, name: true, currency: true },
+            }),
+            tx.order.findMany({
+              where: { deletedAt: null },
+              select: {
+                id: true,
+                orderNo: true,
+                status: true,
+                projectId: true,
+                createdAt: true,
+                currency: true,
+              },
+            }),
+            tx.project.findMany({ select: { id: true, name: true } }),
+            tx.commission.findMany({
+              where: {
+                deletedAt: null,
+                status: { not: "VOID" },
+                currency: q.currency,
+                ...(q.orderId ? { orderId: q.orderId } : {}),
+                dueOn: { gte: new Date(q.from), lte: new Date(q.to) },
+              },
+              select: { id: true, orderId: true, amount: true },
+            }),
+          ]);
+        return { receipts, expenses, accounts, orders, projects, commissions };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
     const orders = new Map(data.orders.map((o) => [o.id, o]));
     const projects = new Map(data.projects.map((p) => [p.id, p.name]));
     const accounts = new Map(data.accounts.map((v) => [v.id, v.name]));
@@ -166,7 +174,6 @@ export class FinanceService {
       pageSize: q.pageSize,
       summary: totals(rows),
       accounts: data.accounts.filter((x) => x.currency === q.currency),
-      projects: data.projects,
     };
   }
   async statistics(a: Actor, input: any) {
@@ -182,7 +189,7 @@ export class FinanceService {
     const { q, data, rows, orders } = await this.snapshot(a, input);
     const selectedOrders = data.orders.filter(
       (o) =>
-        o.status !== "DRAFT" &&
+        o.currency === q.currency &&
         (!q.projectId || o.projectId === q.projectId) &&
         (!q.orderId || o.id === q.orderId) &&
         businessDay(o.createdAt) >= q.from &&
@@ -229,7 +236,6 @@ export class FinanceService {
         feeType,
         amount: totals(values).outgoing,
       })),
-      projects: data.projects,
     };
   }
 }

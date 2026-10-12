@@ -581,6 +581,8 @@ test("full workflow and authorization invariants", async (t) => {
         sourceKey: randomUUID(),
       };
       await finance.call("POST", "/commissions/" + commission.id + "/payments",
+        { ...body, paymentMethod: "INVALID" }, 400);
+      await finance.call("POST", "/commissions/" + commission.id + "/payments",
         { ...body, amount: "600", sourceKey: randomUUID() }, 400);
       const e = await finance.call(
         "POST",
@@ -599,6 +601,12 @@ test("full workflow and authorization invariants", async (t) => {
         ).id,
         e.id,
       );
+      const detail = await finance.call("GET", "/expenses/" + e.id);
+      const relatedOrder = await finance.call("GET", "/orders/" + order.id);
+      const relatedProject = await finance.call("GET", "/projects/" + relatedOrder.projectId);
+      assert.equal(detail.projectId, relatedOrder.projectId);
+      assert.equal(detail.projectName, relatedProject.name);
+      assert.equal(detail.orderNo, relatedOrder.orderNo);
       assert.equal(
         Number(
           (await finance.call("GET", "/commissions/" + commission.id))
@@ -619,6 +627,7 @@ test("full workflow and authorization invariants", async (t) => {
       feeType: "OTHER", amount: "80.01", payeeName: "付款规则回归", dueOn: "2026-10-10",
     }, 201);
     const pay = { amount: "80.01", sourceKey: randomUUID(), paidOn: "2026-10-10", fundAccountId: account.id, paymentMethod: "BANK" };
+    await finance.call("POST", `/expenses/${expense.id}/pay`, { ...pay, paymentMethod: "INVALID" }, 400);
     await finance.call("POST", `/expenses/${expense.id}/pay`, { ...pay, amount: "40" }, 400);
     const responses = await Promise.all([0, 1].map(() => fetch(base + `/expenses/${expense.id}/pay`, {
       method: "POST", headers: { "Content-Type": "application/json", Cookie: finance.cookies, "X-CSRF-Token": finance.csrf },

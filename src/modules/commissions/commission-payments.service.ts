@@ -26,7 +26,7 @@ export class CommissionPaymentsService {
         amount: money,
         paidOn: date,
         fundAccountId: z.string().uuid(),
-        paymentMethod: z.string().min(1),
+        paymentMethod: z.enum(["BANK", "CASH", "CHEQUE"]),
         bankReference: z.string().optional(),
         sourceKey: z.string().uuid(),
       })

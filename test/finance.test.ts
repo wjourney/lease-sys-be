@@ -122,7 +122,7 @@ const admin = {
   salesCompanyId: null,
   authVersion: 1,
 };
-function service(withOtherOrder = false) {
+function service(withOtherOrder = false, extraOrders: any[] = []) {
   const tx: any = {
     income: {
       findMany: async () => [
@@ -165,6 +165,7 @@ function service(withOtherOrder = false) {
         {
           id: orderId,
           orderNo: "O1",
+          currency: "HKD",
           projectId,
           createdAt: new Date("2026-09-30T17:00:00Z"),
         },
@@ -173,11 +174,13 @@ function service(withOtherOrder = false) {
               {
                 id: otherOrderId,
                 orderNo: "O2",
+                currency: "HKD",
                 projectId,
                 createdAt: new Date("2026-10-03T00:00:00Z"),
               },
             ]
           : []),
+        ...extraOrders,
       ],
     },
     project: { findMany: async () => [{ id: projectId, name: "项目" }] },
@@ -191,7 +194,16 @@ function service(withOtherOrder = false) {
       ],
     },
   };
-  return new FinanceService({ $transaction: async (fn: any) => fn(tx) } as any);
+  return new FinanceService({
+    $transaction: async (fn: any, options: any) => {
+      assert.equal(
+        options?.isolationLevel,
+        "RepeatableRead",
+        "finance aggregates need one stable read snapshot",
+      );
+      return fn(tx);
+    },
+  } as any);
 }
 test("server paging and filters operate on individual movements with totals across all matching pages", async () => {
   const result = await service().ledger(admin, {
@@ -290,4 +302,45 @@ test("unknown order yields empty aggregates; malformed order IDs are rejected", 
     }).success,
     false,
   );
+});
+
+test("new order counts include legacy in-progress states but stay within currency and date scope", async () => {
+  const finance = service(false, [
+    {
+      id: "legacy",
+      status: "DRAFT",
+      currency: "HKD",
+      projectId,
+      createdAt: new Date("2026-10-04"),
+    },
+    {
+      id: "ended",
+      status: "COMPLETED",
+      currency: "HKD",
+      projectId,
+      createdAt: new Date("2026-10-05"),
+    },
+    {
+      id: "foreign",
+      status: "ACTIVE",
+      currency: "CNY",
+      projectId,
+      createdAt: new Date("2026-10-05"),
+    },
+    {
+      id: "older",
+      status: "ACTIVE",
+      currency: "HKD",
+      projectId,
+      createdAt: new Date("2026-09-29"),
+    },
+  ]);
+  const result = await finance.statistics(admin, {
+    from: "2026-10-01",
+    to: "2026-10-31",
+  });
+  assert.equal(result.summary.orderCount, 3);
+  assert.equal(result.trend[0].orderCount, 3);
+  assert.equal(result.summary.incoming, "100.01");
+  assert.equal(result.summary.net, "80.01");
 });

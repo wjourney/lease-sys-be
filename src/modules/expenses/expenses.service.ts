@@ -42,7 +42,7 @@ export class ExpensesService extends ResourceService {
       row.status !== "UNPAID" ||
       number(row.paidAmount).gt(0) ||
       row.commissionId ||
-      ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
+      ["COMMISSION", "DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动生成的支出不能直接修改");
   }
@@ -51,7 +51,7 @@ export class ExpensesService extends ResourceService {
       row.status === "PAID" ||
       number(row.paidAmount).gt(0) ||
       row.commissionId ||
-      ["DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
+      ["COMMISSION", "DEPOSIT_REFUND", "RENT_REFUND"].includes(row.feeType)
     )
       fail("已付款或自动产生的支出不能删除");
   }
@@ -85,7 +85,18 @@ export class ExpensesService extends ResourceService {
     };
   }
   async enrich(a: Actor, row: any) {
-    const result = await super.enrich(a, row);
+    // Legacy commission payments only stored orderId. Match the ledger's project fallback.
+    const order =
+      row.orderId && !row.projectId
+        ? await this.db.order.findUnique({
+            where: { id: row.orderId },
+            select: { projectId: true },
+          })
+        : undefined;
+    const result = await super.enrich(a, {
+      ...row,
+      projectId: row.projectId || order?.projectId || null,
+    });
     const records =
       Array.isArray(row.paymentRecords) && row.paymentRecords.length
         ? row.paymentRecords
