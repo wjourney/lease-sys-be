@@ -1,6 +1,7 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { AccessService } from "../../common/auth/access.service";
-import { Actor } from "../../common/auth/actor";
+import { Actor, financial } from "../../common/auth/actor";
+import { paymentActors, resolveOperationActors } from "../../common/database/operation-actors";
 import { ResourceService } from "../../common/resources/resource.service";
 import { fail } from "../../common/utils/errors";
 import { number } from "../../common/utils/value";
@@ -124,6 +125,53 @@ export class CommissionsService extends ResourceService {
   }
   protected async beforeRemove() {
     fail("佣金不能删除，请通过订单作废未支付佣金");
+  }
+  async detail(a: Actor, key: string) {
+    // Authorize the commission before loading any related business or payment data.
+    const result = await super.detail(a, key);
+    let order: any;
+    try {
+      order = await this.access.get(a, "orders", result.orderId);
+    } catch (error) {
+      if (!(error instanceof NotFoundException)) throw error;
+    }
+    const [project, unit, expenses] = await Promise.all([
+      order?.projectId ? this.db.project.findUnique({ where: { id: order.projectId }, select: { name: true } }) : null,
+      order?.unitId ? this.db.unit.findUnique({ where: { id: order.unitId }, select: { unitNo: true } }) : null,
+      financial(a) ? this.db.expense.findMany({ where: { commissionId: key, deletedAt: null, status: "PAID", paidAmount: { gt: 0 } }, orderBy: [{ paidOn: "desc" }, { createdAt: "desc" }] }) : [],
+    ]);
+    const records = expenses.flatMap((expense) => {
+      const stored = Array.isArray(expense.paymentRecords) && expense.paymentRecords.length
+        ? expense.paymentRecords as any[] : [];
+      const payments = stored.length ? stored : [{ amount: expense.paidAmount.toString(), paidOn: expense.paidOn, fundAccountId: expense.fundAccountId, paymentMethod: expense.paymentMethod, bankReference: expense.bankReference }];
+      return paymentActors(payments, Array.isArray(expense.operationLogs) ? expense.operationLogs : [], !stored.length)
+        .filter((payment) => number(payment.amount).gt(0))
+        .map((payment, index) => ({ ...payment, id: `${expense.id}:${payment.sourceKey || index}`, currency: expense.currency }));
+    });
+    const [accounts, identities] = await Promise.all([
+      records.length ? this.db.fundAccount.findMany({ where: { id: { in: [...new Set(records.map((r) => r.fundAccountId).filter(Boolean))] } }, select: { id: true, name: true } }) : [],
+      resolveOperationActors(this.db, records),
+    ]);
+    const accountNames = new Map(accounts.map((account) => [account.id, account.name] as const));
+    return {
+      ...result,
+      orderSummary: order ? {
+        orderNo: order.orderNo,
+        tenantName: order.tenantName,
+        projectName: project?.name || null,
+        unitNo: unit?.unitNo || null,
+        startsOn: order.startsOn,
+        endsOn: order.endsOn,
+        monthlyRent: order.monthlyRent?.toString() ?? null,
+        currency: order.currency,
+      } : null,
+      ...(financial(a) ? { paymentRecords: records.map((record, index) => ({
+        id: record.id, paidOn: record.paidOn, amount: number(record.amount).toFixed(2), currency: record.currency,
+        accountName: accountNames.get(record.fundAccountId) || "—", paymentMethod: record.paymentMethod,
+        actorId: identities[index].actorId, actorName: identities[index].actorName, actorPhone: identities[index].actorPhone,
+        actorUsername: identities[index].actorUsername, actorType: identities[index].actorType, actorDeleted: identities[index].actorDeleted,
+      })) } : {}),
+    };
   }
   async enrich(a: Actor, row: any) {
     const x = await super.enrich(a, row);

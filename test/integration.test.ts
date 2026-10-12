@@ -607,13 +607,13 @@ test("full workflow and authorization invariants", async (t) => {
       assert.equal(detail.projectId, relatedOrder.projectId);
       assert.equal(detail.projectName, relatedProject.name);
       assert.equal(detail.orderNo, relatedOrder.orderNo);
-      assert.equal(
-        Number(
-          (await finance.call("GET", "/commissions/" + commission.id))
-            .paidAmount,
-        ),
-        1200,
-      );
+      const commissionDetail = await finance.call("GET", "/commissions/" + commission.id);
+      assert.equal(Number(commissionDetail.paidAmount), 1200);
+      assert.equal(commissionDetail.orderSummary.orderNo, relatedOrder.orderNo);
+      assert.equal(commissionDetail.orderSummary.projectName, relatedProject.name);
+      assert.equal(commissionDetail.paymentRecords.length, 1);
+      assert.equal(Number(commissionDetail.paymentRecords[0].amount), 1200);
+      assert.equal(commissionDetail.paymentRecords[0].accountName, account.name);
       await finance.call(
         "POST",
         "/commissions/" + commission.id + "/payments",
