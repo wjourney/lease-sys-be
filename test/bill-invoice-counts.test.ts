@@ -23,7 +23,7 @@ test("invoice availability counts active invoices on confirmed receipts only, ac
     invoice: {
       groupBy: async ({ where, by }: any) => {
         assert.deepEqual(where, {
-          incomeId: { in: ["r1", "r2", "r3"] },
+          incomeId: { in: ["b1", "b2", "b3", "r1", "r2", "r3"] },
           status: "ACTIVE",
           deletedAt: null,
         });
@@ -45,7 +45,7 @@ test("invoice availability counts active invoices on confirmed receipts only, ac
   );
   assert.equal((await billInvoiceCounts({}, [])).size, 0);
   assert.equal(
-    (await billInvoiceCounts({ income: { findMany: async () => [] } }, ["b1"]))
+    (await billInvoiceCounts({ income: { findMany: async () => [] }, invoice: { groupBy: async () => [] } }, ["b1"]))
       .size,
     0,
   );

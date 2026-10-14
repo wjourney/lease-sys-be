@@ -17,6 +17,62 @@ export class InvoiceRenderService {
     @Inject(StorageService) readonly storage: StorageService,
     @Inject(PdfService) readonly pdfRenderer: PdfService,
   ) {}
+  private documentHtml(inv: any) {
+    const s = inv.snapshot || {};
+    const dateText = (value: any) =>
+      value
+        ? String(value instanceof Date ? value.toISOString() : value).slice(
+            0,
+            10,
+          )
+        : "—";
+    const title =
+      inv.status === "DRAFT"
+        ? "发票草稿 DRAFT"
+        : inv.status === "VOID"
+          ? "已作废发票 VOID"
+          : "租赁发票 INVOICE";
+    return this.pdfRenderer.html(
+      title,
+      [
+        ["发票编号", inv.invoiceNo],
+        ["出具日期", dateText(inv.issuedOn)],
+        ["到期日", dateText(s.dueOn)],
+        [
+          "项目 / 单位",
+          [s.projectName, s.unitNo].filter(Boolean).join(" · ") || "—",
+        ],
+        ["付款人", s.payerName],
+        ["联系电话", s.payerPhone],
+        [
+          "关联费用",
+          ({ RENT: "租金", DEPOSIT: "押金", OTHER: "其他费用" } as any)[
+            s.feeType
+          ] || s.feeType,
+        ],
+        ["账单 / 收款编号", s.billNo || s.recordNo],
+        ["账期", `${dateText(s.periodStart)} ~ ${dateText(s.periodEnd)}`],
+        ["金额", `${inv.currency} ${inv.amount}`],
+      ],
+      [
+        inv.status === "DRAFT"
+          ? "草稿仅供核对，尚未出具。"
+          : inv.status === "VOID"
+            ? "此发票已作废。"
+            : "",
+        s.remark,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  async preview(a: Actor, key: string) {
+    const inv = await this.access.get(a, "invoices", key);
+    return {
+      filename: `${inv.invoiceNo}.pdf`,
+      data: await this.pdfRenderer.pdf(this.documentHtml(inv)),
+    };
+  }
   async render(a: Actor, key: string) {
     demand(financial(a));
     const inv = await this.access.get(a, "invoices", key);
@@ -36,24 +92,7 @@ export class InvoiceRenderService {
     if (!claimed.count) fail("发票正在生成");
     let file: StoredFile | undefined;
     try {
-      const s = inv.snapshot as any;
-      const buffer = await this.pdfRenderer.pdf(
-        this.pdfRenderer.html("租赁发票 INVOICE", [
-          ["发票号码", inv.invoiceNo],
-          ["开具日期", inv.issuedOn.toISOString().slice(0, 10)],
-          ["付款方", s.payerName],
-          [
-            "费用类型",
-            s.feeType === "RENT"
-              ? "租金"
-              : s.feeType === "DEPOSIT"
-                ? "押金"
-                : "其他收入",
-          ],
-          ["收款编号", s.recordNo],
-          ["金额", `${inv.currency} ${inv.amount}`],
-        ]),
-      );
+      const buffer = await this.pdfRenderer.pdf(this.documentHtml(inv));
       file = await this.storage.save(buffer, "application/pdf");
       return await this.db.$transaction(async (tx) => {
         await lock(tx, "invoices", key);

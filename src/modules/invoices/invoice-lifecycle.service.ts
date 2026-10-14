@@ -16,10 +16,14 @@ export class InvoiceLifecycleService {
     if (!reason?.trim()) fail("请填写原因");
     return this.db.$transaction(async (tx) => {
       const initial = await this.access.get(a, "invoices", key, tx);
+      const income = await tx.income.findUnique({ where: { id: initial.incomeId } });
+      if (income?.orderId) await lock(tx, "orders", income.orderId);
+      if (income?.parentId) await lock(tx, "incomes", income.parentId);
       await lock(tx, "incomes", initial.incomeId);
       await lock(tx, "invoices", key);
       const old = await this.access.get(a, "invoices", key, tx);
-      if (old.status !== "ACTIVE") fail("发票已经作废");
+      if (!["DRAFT", "ACTIVE"].includes(old.status)) fail("发票已经作废");
+      if (reissue && old.status !== "ACTIVE") fail("草稿请直接编辑后出具");
       await update(
         tx,
         "invoices",

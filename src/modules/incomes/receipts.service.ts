@@ -28,7 +28,7 @@ export class ReceiptsService {
       await lock(tx, "incomes", key);
       const root = await this.access.get(a, "incomes", key, tx);
       return this.register(tx, a, root, d);
-    });
+    }, { isolationLevel: "ReadCommitted" });
   }
   // The caller locks the order and bills. Shared by initial and later payments.
   async register(
@@ -117,6 +117,8 @@ export class ReceiptsService {
     return child;
   }
   private async issueInvoice(tx: any, a: Actor, receipt: any, root: any) {
+    // Keep legacy automatic receipts while avoiding a second invoice for an explicitly invoiced bill.
+    if (await tx.invoice.findFirst({ where: { incomeId: root.id, deletedAt: null, status: { in: ["DRAFT", "ACTIVE"] } } })) return;
     await insert(
       tx,
       "invoices",
@@ -199,7 +201,7 @@ export class ReceiptsService {
         }
         return { id: receipts[0].id, receipts };
       },
-      { timeout: 15000 },
+      { timeout: 15000, isolationLevel: "ReadCommitted" },
     );
   }
   async batchBills(a: Actor, body: any) {
@@ -375,7 +377,7 @@ export class ReceiptsService {
           approve ? "确认到账" : reason,
         );
         const root = await tx.income.findUnique({ where: { id: r.parentId! } });
-        if (approve)
+        if (approve && !(await tx.invoice.findFirst({ where: { incomeId: root!.id, deletedAt: null, status: { in: ["DRAFT", "ACTIVE"] } } })))
           await insert(
             tx,
             "invoices",
@@ -402,7 +404,7 @@ export class ReceiptsService {
         await this.refresh(tx, a, root);
         return result;
       },
-      { timeout: 15000 },
+      { timeout: 15000, isolationLevel: "ReadCommitted" },
     );
   }
 }

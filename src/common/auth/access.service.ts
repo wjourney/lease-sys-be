@@ -64,7 +64,7 @@ export class AccessService {
       select: { id: true },
     });
     const receiptIds = receipts.map((x) => x.id);
-    if (r === "invoices") return { incomeId: { in: receiptIds } };
+    if (r === "invoices") return { incomeId: { in: [...rootIds, ...receiptIds] } };
     if (r === "materials") {
       const projects = await tx.project.findMany({
         where: { status: "ACTIVE", deletedAt: null },
@@ -76,7 +76,7 @@ export class AccessService {
         select: { id: true },
       });
       const inv = await tx.invoice.findMany({
-        where: { incomeId: { in: receiptIds } },
+        where: { incomeId: { in: [...rootIds, ...receiptIds] } },
         select: { id: true },
       });
       return {

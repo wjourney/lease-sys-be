@@ -54,7 +54,7 @@ export class InvoiceBatchService {
       });
       const invoices = await this.db.invoice.findMany({
         where: {
-          incomeId: { in: receipts.map((r) => r.id) },
+          incomeId: { in: [bill.id, ...receipts.map((r) => r.id)] },
           deletedAt: null,
           status: "ACTIVE",
         },
@@ -62,7 +62,7 @@ export class InvoiceBatchService {
         take: 101,
       });
       if (!invoices.length) {
-        report.push(`${bill.recordNo}: 暂无有效发票，请先登记收款`);
+        report.push(`${bill.recordNo}: 暂无有效发票，请先出具发票`);
         issues++;
         continue;
       }
@@ -122,7 +122,7 @@ export class InvoiceBatchService {
   }
   async downloadBill(actor: Actor, billId: string) {
     const result = await this.download(actor, { billIds: [billId] });
-    if (!result.count) fail("暂无可下载发票，请登记收款或稍后重试");
+    if (!result.count) fail("暂无可下载发票，请先出具发票或稍后重试");
     // A single-bill download must not silently omit one of its invoices.
     if (result.issues) fail("部分发票暂时无法下载，请稍后重试");
     const single = result.count === 1;

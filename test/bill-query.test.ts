@@ -108,6 +108,7 @@ test("bill list keeps authorized scope, totals all pages, sorts open bills first
   }));
   let where: any;
   const tx = {
+    invoice: { groupBy: async () => [] },
     order: {
       findMany: async (args: any) => {
         assert.deepEqual(args.where.AND[1], { id: { in: ["o"] } });

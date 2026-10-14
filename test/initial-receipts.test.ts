@@ -44,7 +44,7 @@ function fixture(rentReceived = "15000.00") {
         return receipt;
       },
     },
-    invoice: { create: async ({ data }: any) => data },
+    invoice: { findFirst: async () => null, create: async ({ data }: any) => data },
     order: { findUnique: async () => order },
   };
   const service = new ReceiptsService(

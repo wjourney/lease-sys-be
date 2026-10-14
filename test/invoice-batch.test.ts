@@ -25,7 +25,7 @@ function harness(count = 2, failSecond = true) {
       findMany: async ({ where }: any) => {
         assert.equal(where.status, "ACTIVE");
         assert.equal(where.deletedAt, null);
-        return where.incomeId.in.length
+        return where.incomeId.in.includes("receipt")
           ? [
               { id: "i1", invoiceNo: "INV001" },
               { id: "i2", invoiceNo: "INV002" },

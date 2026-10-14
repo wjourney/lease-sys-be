@@ -31,6 +31,7 @@ export const ProjectsSchema = z.object({
   longitude: z.number().min(-180).max(180).nullable().optional(),
   latitude: z.number().min(-90).max(90).nullable().optional(),
   description: opt,
+  remark: opt,
   facilities: z.array(z.string()).optional(),
   extra: ProjectExtraSchema.optional(),
   salesCanViewExactRent: z.boolean().optional(),

@@ -92,6 +92,7 @@ model Project {
   longitude             Decimal?  @db.Decimal(12, 8)
   latitude              Decimal?  @db.Decimal(12, 8)
   description           String? @db.Text
+  remark                String? @db.Text
   facilities            Json      @default("[]")
   extra                 Json      @default("{}")
   salesCanViewExactRent Boolean   @default(false)

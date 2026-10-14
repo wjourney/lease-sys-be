@@ -27,6 +27,16 @@ export class InvoicesController {
     @Inject(InvoiceLifecycleService) private lifecycle: InvoiceLifecycleService,
     @Inject(InvoiceEmailService) private email: InvoiceEmailService,
   ) {}
+  @Post(":id/issue") issue(@Req() r: any, @Param("id") id: string) {
+    return this.service.issue(r.actor, id);
+  }
+  @Get(":id/pdf") async pdf(@Req() r: any, @Param("id") id: string, @Query("download") download: string, @Res() res: any) {
+    const result = await this.renderer.preview(r.actor, id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `${download === "true" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+    res.setHeader("Cache-Control", "no-store");
+    res.send(result.data);
+  }
   @Post("batch-download") async batchDownload(
     @Req() r: any,
     @Body() body: unknown,

@@ -55,6 +55,8 @@ const admin = new Client(),
   finance = new Client(),
   operations = new Client(),
   company = new Client();
+
+
 let a: any,
   sa: any,
   fi: any,
@@ -2094,4 +2096,35 @@ test("deposit management reuses the order ledger and protects corrected refunds"
   assert.equal((await finance.call("GET", path + "&state=REFUND_PENDING")).total, 0);
   assert.equal(lease.deposit.refunds[0].paymentRecords.length, 1);
   assert.equal(lease.deposit.refunds[0].paymentRecords[0].actorName, fi.name);
+});
+
+test("bill invoices can be drafted and issued before receipt without duplicate invoices", async () => {
+  await admin.login("admin"); await finance.login("finance"); await operations.login("operations"); await other.login("sales.other");
+  const template = await admin.call("GET", `/units/${order.unitId}`);
+  const unit = await admin.call("POST", "/units", { projectId: template.projectId, roomNo: `发票测试-${randomUUID().slice(0, 8)}`, unitTypeCode: template.unitTypeCode, minLeaseMonths: 1 }, 201);
+  const lease = await admin.call("POST", "/orders", { projectId: template.projectId, unitId: unit.id, salesUserId: order.salesUserId, tenantType: "PERSON", tenantName: "开票租客", startsOn: "2026-10-01", endsOn: "2026-10-31", monthlyRent: "1000", depositAmount: "100", depositPlan: "OTHER" }, 201);
+  const leaseDetail = await finance.call("GET", `/orders/${lease.id}`);
+  const bill = leaseDetail.bills.find((b: any) => b.feeType === "RENT");
+  const input = { billId: bill.id, issuedOn: "2026-10-14", dueOn: "2026-11-01", remark: "收款前开票" };
+  await operations.call("POST", "/invoices", input, 403);
+  const attempts = await Promise.all([1, 2].map(() => fetch(base + "/invoices", { method: "POST", headers: { "Content-Type": "application/json", Cookie: finance.cookies, "X-CSRF-Token": finance.csrf }, body: JSON.stringify(input) })));
+  assert.deepEqual(attempts.map((r) => r.status).sort(), [201, 400]);
+  const created = await attempts.find((r) => r.status === 201)!.json() as any;
+  assert.equal(created.status, "DRAFT"); assert.equal(created.payerName, "开票租客"); assert.equal(created.unitNo, unit.unitNo);
+  const edited = await finance.call("PATCH", `/invoices/${created.id}`, { issuedOn: input.issuedOn, dueOn: input.dueOn, remark: "已核对", revision: created.revision });
+  const issued = await Promise.all([1, 2].map(() => finance.call("POST", `/invoices/${created.id}/issue`, {}, 201)));
+  assert.equal(issued[0].id, issued[1].id); assert.equal(issued[0].status, "ACTIVE");
+  await finance.call("PATCH", `/invoices/${created.id}`, { issuedOn: input.issuedOn, dueOn: input.dueOn, revision: edited.revision }, 400);
+  await other.call("GET", `/invoices/${created.id}`, undefined, 404);
+  await operations.call("GET", `/invoices/${created.id}/pdf`, undefined, 403);
+  const pdf = await fetch(base + `/invoices/${created.id}/pdf`, { headers: { Cookie: finance.cookies } });
+  assert.equal(pdf.status, 200); assert.match(pdf.headers.get("content-type") || "", /application\/pdf/);
+  const bytes = Buffer.from(await pdf.arrayBuffer()); assert.equal(bytes.subarray(0, 4).toString(), "%PDF");
+  const fs = await import("node:fs/promises"); await fs.writeFile("/tmp/lease-invoice-qa.pdf", bytes);
+  await finance.call("POST", `/incomes/${bill.id}/receipts`, { amount: bill.available, receivedOn: "2026-10-14", payerName: "开票租客", fundAccountId: account.id, paymentMethod: "BANK", sourceKey: randomUUID() }, 201);
+  const related = await finance.call("GET", `/invoices?billId=${bill.id}`);
+  assert.equal(related.total, 1); assert.equal((await finance.call("GET", `/incomes/${bill.id}`)).invoiceCount, 1);
+  const project = await admin.call("GET", `/projects/${template.projectId}`);
+  await admin.call("PATCH", `/projects/${project.id}`, { revision: project.revision, remark: "项目备注\n第二行" });
+  assert.equal((await admin.call("GET", `/projects/${project.id}`)).remark, "项目备注\n第二行");
 });

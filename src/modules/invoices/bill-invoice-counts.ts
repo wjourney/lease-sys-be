@@ -11,21 +11,20 @@ export async function billInvoiceCounts(db: any, billIds: string[]) {
     },
     select: { id: true, parentId: true },
   });
-  if (!receipts.length) return counts;
   const billByReceipt = new Map<string, string>(
     receipts.map((r: any) => [r.id, r.parentId]),
   );
   const groups = await db.invoice.groupBy({
     by: ["incomeId"],
     where: {
-      incomeId: { in: receipts.map((r: any) => r.id) },
+      incomeId: { in: [...billIds, ...receipts.map((r: any) => r.id)] },
       status: "ACTIVE",
       deletedAt: null,
     },
     _count: { _all: true },
   });
   for (const group of groups) {
-    const billId = billByReceipt.get(group.incomeId);
+    const billId = billIds.includes(group.incomeId) ? group.incomeId : billByReceipt.get(group.incomeId);
     if (billId)
       counts.set(billId, (counts.get(billId) || 0) + group._count._all);
   }
