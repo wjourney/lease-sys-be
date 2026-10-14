@@ -22,6 +22,7 @@ export class TasksService implements OnApplicationBootstrap, OnModuleDestroy {
     if (process.env.DISABLE_SCHEDULER === "true") return;
     this.timer = setInterval(() => void this.tick(), 60000);
     this.timer.unref();
+    void this.tick();
   }
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
@@ -36,7 +37,11 @@ export class TasksService implements OnApplicationBootstrap, OnModuleDestroy {
       });
       if (!actor) return;
       const system = { ...actor, name: "系统任务", system: true };
-      await this.jobs.generateDue(system);
+      try {
+        await this.jobs.generateDue(system);
+      } catch (error) {
+        console.error("Due bill task failed", error);
+      }
 
       // A crashed renderer leaves a ten-minute lease; make it retryable after restart.
       await db.invoice.updateMany({
@@ -46,6 +51,26 @@ export class TasksService implements OnApplicationBootstrap, OnModuleDestroy {
           renderNextRetryAt: { lte: new Date() },
         },
         data: { renderStatus: "FAILED", renderError: "生成任务中断，等待重试" },
+      });
+      // SMTP may have accepted a message before a worker crashed. Never retry
+      // that uncertain delivery automatically, or the recipient may get two.
+      await db.invoice.updateMany({
+        where: {
+          status: "ACTIVE",
+          emailStatus: "SENDING",
+          OR: [
+            { emailNextRetryAt: { lte: new Date() } },
+            {
+              emailNextRetryAt: null,
+              updatedAt: { lte: new Date(Date.now() - 10 * 60_000) },
+            },
+          ],
+        },
+        data: {
+          emailStatus: "UNKNOWN",
+          emailLastError: "发送任务中断，请核验收件箱后决定是否重试",
+          emailNextRetryAt: null,
+        },
       });
       const pending = await db.invoice.findMany({
         where: {

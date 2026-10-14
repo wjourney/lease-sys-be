@@ -24,8 +24,11 @@ export class InvoiceEmailService {
       })
       .strict()
       .parse(body);
-    if (!process.env.SMTP_HOST) fail("尚未配置邮件服务，请先下载发票");
-    return this.db.$transaction(async (tx) => {
+    if (!process.env.SMTP_HOST || !process.env.SMTP_FROM)
+      fail("邮件服务未配置完整，请联系管理员配置发件服务器和发件邮箱");
+    if (Boolean(process.env.SMTP_USER) !== Boolean(process.env.SMTP_PASSWORD))
+      fail("邮件服务账号或密码未配置完整，请联系管理员");
+    const invoice = await this.db.$transaction(async (tx) => {
       await lock(tx, "invoices", key);
       const inv = await this.access.get(a, "invoices", key, tx);
       if (inv.status !== "ACTIVE") fail("作废发票不能发送");
@@ -43,11 +46,18 @@ export class InvoiceEmailService {
           emailStatus: "PENDING",
           emailAttempts: 0,
           emailNextRetryAt: new Date(),
+          emailLastError: null,
         },
         a,
         "请求发送发票",
       );
     });
+    // Start delivery after the transaction commits. The scheduler remains a backup
+    // if this process exits before the task finishes.
+    void this.sendPending(a, key).catch((error) =>
+      console.error("Invoice email task failed", key, error),
+    );
+    return invoice;
   }
   async resolveEmail(a: Actor, key: string, body: any) {
     demand(financial(a));
@@ -61,7 +71,7 @@ export class InvoiceEmailService {
     return this.db.$transaction(async (tx) => {
       await lock(tx, "invoices", key);
       const inv = await this.access.get(a, "invoices", key, tx);
-      if (!["UNKNOWN", "SENDING"].includes(inv.emailStatus))
+      if (inv.emailStatus !== "UNKNOWN")
         fail("当前发送状态无需人工核验");
       return update(
         tx,
@@ -83,15 +93,24 @@ export class InvoiceEmailService {
       !inv ||
       inv.status !== "ACTIVE" ||
       inv.renderStatus !== "READY" ||
-      !process.env.SMTP_HOST
+      inv.emailStatus !== "PENDING"
     )
       return;
     const claim = await this.db.invoice.updateMany({
       where: { id: key, emailStatus: "PENDING" },
-      data: { emailStatus: "SENDING", emailAttempts: { increment: 1 } },
+      data: {
+        emailStatus: "SENDING",
+        emailAttempts: { increment: 1 },
+        emailNextRetryAt: new Date(Date.now() + 10 * 60_000),
+      },
     });
     if (!claim.count) return;
+    let deliveryStarted = false;
     try {
+      if (!process.env.SMTP_HOST || !process.env.SMTP_FROM)
+        throw new Error("邮件服务未配置完整，请联系管理员");
+      if (Boolean(process.env.SMTP_USER) !== Boolean(process.env.SMTP_PASSWORD))
+        throw new Error("邮件服务账号或密码未配置完整，请联系管理员");
       const m = await this.db.material.findFirst({
         where: { invoiceId: key, deletedAt: null, isCurrent: true },
       });
@@ -104,19 +123,23 @@ export class InvoiceEmailService {
           ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD }
           : undefined,
       });
+      const attachment = await this.storage.read({
+        storageProvider: m.storageProvider,
+        storageKey: m.storageKey,
+      });
+      const fromDomain =
+        process.env.SMTP_FROM.match(/@([^>\s]+)/)?.[1] || "lease.local";
+      deliveryStarted = true;
       await transport.sendMail({
         from: process.env.SMTP_FROM,
         to: inv.emailTo!,
         subject: inv.emailSubject!,
-        messageId: `<${inv.emailRequestId}@lease.local>`,
+        messageId: `<${inv.emailRequestId}@${fromDomain}>`,
         text: "请查收附件中的发票。",
         attachments: [
           {
             filename: inv.invoiceNo + ".pdf",
-            content: await this.storage.read({
-              storageProvider: m.storageProvider,
-              storageKey: m.storageKey,
-            }),
+            content: attachment,
           },
         ],
       });
@@ -138,18 +161,27 @@ export class InvoiceEmailService {
       );
     } catch (e) {
       const row = await this.db.invoice.findUnique({ where: { id: key } });
+      const rawError = e instanceof Error ? e.message : String(e);
+      const safeError = process.env.SMTP_PASSWORD
+        ? rawError.replaceAll(process.env.SMTP_PASSWORD, "[REDACTED]")
+        : rawError;
       await this.db.$transaction((tx) =>
         update(
           tx,
           "invoices",
           row,
           {
-            emailStatus: "UNKNOWN",
-            emailLastError: (e as Error).message.slice(0, 500),
+            emailStatus:
+              deliveryStarted && !["EAUTH", "EENVELOPE", "EMESSAGE"].includes(
+                (e as Error & { code?: string }).code || "",
+              )
+                ? "UNKNOWN"
+                : "FAILED",
+            emailLastError: safeError.slice(0, 500),
             emailNextRetryAt: null,
           },
           a,
-          "发送结果待核验",
+          deliveryStarted ? "发票邮件发送异常" : "发票邮件发送失败",
         ),
       );
     }
